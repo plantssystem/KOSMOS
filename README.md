@@ -5,6 +5,10 @@ This project includes software, hardware design files, and presets.
 
 ![Main Screen](docs/screenshots/KOSOMOS_01.jpg)
 
+## Demo Video
+
+[![KOSMOS Demo](https://img.youtube.com/vi/_1gKvzI3-Zs/0.jpg)](https://www.youtube.com/shorts/_1gKvzI3-Zs)
+
 License Overview
 
 This project uses multiple licenses depending on the content type.
