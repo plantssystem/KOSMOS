@@ -64,13 +64,6 @@ It is now a **self-contained generative synthesizer**.
 
 ---
 
-## 🖼️ Images
-
-
-
-
----
-
 KOSMOS v1.1.0 separates sequencing and synthesis across the RP2040’s dual cores:
 
 - **Core0** runs the KOSMOS generative sequencer  
