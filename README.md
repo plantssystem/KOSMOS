@@ -4,7 +4,7 @@ Generative MIDI Sequencer + Integrated PRA32-U Sound Engine
 KOSMOS is a generative music instrument built on the RP2040 (Raspberry Pi Pico).  
 While v1.0.0 functioned purely as a **Generative MIDI Sequencer**,  
 v1.1.0 introduces a major evolution:  
-KOSMOS now integrates the **PRA32-U synthesizer engine** (by Ishigaki Instruments) on Core1,  
+KOSMOS now integrates the **PRA32-U synthesizer engine** (by ISGK Instruments) on Core1,  
 allowing the device to **generate sound directly without any external synthesizer**.
 
 This release transforms KOSMOS into a fully self‑contained **generative synthesizer**.
@@ -131,7 +131,7 @@ Notes:
 ## 📜 License
 
 - **KOSMOS**: MIT License  
-- **PRA32-U**: Follows Ishigaki Instruments licensing  
+- **PRA32-U**: Follows ISGK Instruments licensing  
 
 ---
 
