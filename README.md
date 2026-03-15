@@ -66,8 +66,7 @@ It is now a **self-contained generative synthesizer**.
 
 ## 🖼️ Images
 
-You can place your screenshots or hardware photos here.  
-Recommended structure:
+
 
 
 ---
