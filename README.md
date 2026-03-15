@@ -114,6 +114,10 @@ Notes:
 - KOSMOS now functions as a standalone generative synthesizer.
 
 ---
+## Demo Video
+[![KOSMOS Demo](https://img.youtube.com/vi/lYIVvVkZYuw/0.jpg)](https://www.youtube.com/shorts/lYIVvVkZYuw)
+
+---
 
 ## 🚀 Roadmap
 
