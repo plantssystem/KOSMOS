@@ -137,5 +137,5 @@ Notes:
 
 ## ✨ Special Thanks
 
-- **Ishigaki Instruments** — for providing the PRA32-U Core1 implementation  
+- **ISGK Instruments** — for providing the PRA32-U Core1 implementation  
 - The generative music & DIY synth community  
