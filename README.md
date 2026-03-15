@@ -83,21 +83,21 @@ KOSMOS v1.1.0 separates sequencing and synthesis across the RP2040’s dual core
 ## 🏗️ System Architecture (KOSMOS v1.1.0)
 
                    ┌──────────────────────────────────────┐
-                   │            Raspberry Pi Pico          │
-                   │                (RP2040)               │
+                   │            Raspberry Pi Pico         │
+                   │                (RP2040)              │
                    ├──────────────────────────────────────┤
                    │                                      │
                    │   Core0 (KOSMOS Sequencer Engine)    │
-                   │   - Generative phrase logic           │
-                   │   - MIDI event generation             │
-                   │   - Timing / clock management         │
+                   │   - Generative phrase logic          │
+                   │   - MIDI event generation            │
+                   │   - Timing / clock management        │
                    │                                      │
                    ├──────────────────────────────────────┤
                    │                                      │
                    │   Core1 (PRA32-U Synth Engine)       │
-                   │   - Synth engine                      │
-                   │   - Envelope / modulation             │
-                   │   - Voice rendering                   │
+                   │   - Synth engine                     │
+                   │   - Envelope / modulation            │
+                   │   - Voice rendering                  │
                    │                                      │
                    └──────────────────────────────────────┘
                                    │
