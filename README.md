@@ -1,5 +1,3 @@
-***
-
 # KOSMOS v1.2.0
 
 KOSMOS is a **compact Generative MIDI Sequencer** project based on the Raspberry Pi Pico / RP2040.  
