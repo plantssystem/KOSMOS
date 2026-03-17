@@ -1,75 +1,8 @@
-/* KOSMOS + PRA32-U (All-in-One: Pico Audio Pack version) */
-#include <Arduino.h>
-
-// Optional: give Core1 8KB stack if needed
-bool core1_separate_stack = true;
-
-// ----------------- Internal MIDI Bridge (SPSC) -----------------
-
-enum MidiEvType : uint8_t { EV_NOTE_ON=0, EV_NOTE_OFF=1, EV_CC=2 };
-struct MidiEvent { uint8_t type, d1, d2, ch; };
-namespace MidiQ {
-  constexpr size_t QSIZE=64; static volatile uint32_t head=0, tail=0; static MidiEvent q[QSIZE];
-  inline bool push(const MidiEvent& ev){uint32_t h=head,n=(h+1)%QSIZE; if(n==tail) return false; q[h]=ev; head=n; return true;}
-  inline bool pop(MidiEvent& out){uint32_t t=tail; if(t==head) return false; out=q[t]; tail=(t+1)%QSIZE; return true;}
-}
-inline void midi_bridge_send_note_on(uint8_t note,uint8_t vel,uint8_t ch=0){MidiEvent ev{EV_NOTE_ON,note,vel,ch};MidiQ::push(ev);}  
-inline void midi_bridge_send_note_off(uint8_t note,uint8_t ch=0){MidiEvent ev{EV_NOTE_OFF,note,0,ch};MidiQ::push(ev);}  
-inline void midi_bridge_send_cc(uint8_t cc,uint8_t val,uint8_t ch=0){MidiEvent ev{EV_CC,cc,val,ch};MidiQ::push(ev);}  
-
-// ----------------------- PRA32-U on Core1 (I2S 9/10/11) ----------------------
-#include <I2S.h>
-#define PRA32_U_VERSION "v3.3.0 "
-#define PRA32_U_MIDI_CH (0)
-#define PRA32_U_I2S_DAC_MUTE_OFF_PIN (22)
-#define PRA32_U_I2S_DATA_PIN  (9)
-#define PRA32_U_I2S_BCLK_PIN  (10)  // LRCLK = 11（= BCLK+1）
-#define PRA32_U_I2S_SWAP_BCLK_AND_LRCLK_PINS (false)
-#define PRA32_U_I2S_SWAP_LEFT_AND_RIGHT     (false)
-#define PRA32_U_I2S_BUFFERS      (4)
-#define PRA32_U_I2S_BUFFER_WORDS (64)
-
-// Define g_midi_ch BEFORE including the synth headers
-uint8_t g_midi_ch = PRA32_U_MIDI_CH;
-#include "pra32-u-common.h"
-#include "pra32-u-synth.h"
-
-PRA32_U_Synth g_synth; I2S g_i2s_output(OUTPUT);
-
-void __not_in_flash_func(setup1)(){
-  g_i2s_output.setSysClk(SAMPLING_RATE);
-  g_i2s_output.setFrequency(SAMPLING_RATE);
-  g_i2s_output.setDATA(PRA32_U_I2S_DATA_PIN);
-  g_i2s_output.setBCLK(PRA32_U_I2S_BCLK_PIN); // LRCLK implicit = 11
-  if (PRA32_U_I2S_SWAP_BCLK_AND_LRCLK_PINS) g_i2s_output.swapClocks();
-  g_i2s_output.setBitsPerSample(16);
-  g_i2s_output.setBuffers(PRA32_U_I2S_BUFFERS, PRA32_U_I2S_BUFFER_WORDS);
-  g_i2s_output.begin();
-  pinMode(PRA32_U_I2S_DAC_MUTE_OFF_PIN, OUTPUT);
-  digitalWrite(PRA32_U_I2S_DAC_MUTE_OFF_PIN, HIGH); // unmute
-  g_synth.initialize();
-}
-
-void __not_in_flash_func(loop1)(){
-  MidiEvent ev; while(MidiQ::pop(ev)){
-    if(ev.type==EV_NOTE_ON)  g_synth.note_on(ev.d1, ev.d2);
-    else if(ev.type==EV_NOTE_OFF) g_synth.note_off(ev.d1);
-    else {}
-  }
-  int16_t L[PRA32_U_I2S_BUFFER_WORDS], R[PRA32_U_I2S_BUFFER_WORDS];
-  for(uint32_t i=0;i<PRA32_U_I2S_BUFFER_WORDS;i++) L[i]=g_synth.process(R[i]);
-  for(uint32_t i=0;i<PRA32_U_I2S_BUFFER_WORDS;i++) g_i2s_output.write16(L[i], R[i]);
-}
-
-
-// ----------------------- Core0: KOSMOS (patched) -----------------------
 #include <Arduino.h>
 #include <SPI.h>
 #include <Adafruit_TinyUSB.h>
 
 Adafruit_USBD_MIDI usb_midi;
-
-#define DISABLE_SILENCE 1
 
 // ==== RGB565 カラー定義 ====
 #define COLOR_BLACK   0x0000
@@ -83,7 +16,6 @@ Adafruit_USBD_MIDI usb_midi;
 #define COLOR_DARK_GRAY 0x2104
 
 // ==== Waveshare Pico-LCD-1.3 ピン定義 ====
-/*
 #define LCD_DC   8
 #define LCD_CS   9
 #define LCD_RST 12
@@ -91,18 +23,6 @@ Adafruit_USBD_MIDI usb_midi;
 #define LCD_SCK 10
 #define LCD_MOSI 11
 #define LCD_SPI SPI1
-*/
-// ==== Waveshare Pico-LCD-1.3 ピン定義（SPI0版・衝突ゼロ） ====
-#define LCD_DC    8
-#define LCD_CS    5
-#define LCD_RST  12
-#define LCD_BL   13
-
-#define LCD_SCK  18
-#define LCD_MOSI 19
-#define LCD_SPI  SPI   // SPI0 を使用
-
-
 
 #define KEY_A_PIN    15
 #define KEY_B_PIN    17
@@ -239,19 +159,8 @@ int noteLengthMax = 400;         // 最長音長（ミリ秒）
 
 int noteDots[240];   // x=0〜239 にノートの高さを保存
 
-// アルペジオ状態管理
-// ★ アルペジオイベント用グローバル
-unsigned long nextArpEventTime = 0;
-bool arpEventActive = false;
-unsigned long nextArpStepTime = 0;
-
-int arpEventCount = 0;
-int arpRepeatCount = 0;
-int arpRepeatTarget = 0;
-bool arpGoingUp = true;
-int arpFlipWidth = 3;
-unsigned long lastArpActivity = 0;
-
+bool patternA[16];
+bool patternB[16];
 
 int noteToY(uint8_t note) {
     return map(note, 36, 84, 240, 150);  // 下が低音、上が高音
@@ -444,7 +353,7 @@ int steps = 16;
 int hits = 5;
 int rotation = 0;
 
-int pattern[16];
+bool pattern[16];
 int prob[16];
 
 int currentStep = 0;
@@ -453,8 +362,8 @@ int selectedStep = 0;
 // =====================================================
 //  Euclid パターン生成
 // =====================================================
-void makeEuclid(int steps, int hits, int rot, int *pattern) {
-  for (int i = 0; i < steps; i++) pattern[i] = 0;
+void makeEuclid(int steps, int hits, int rot, bool *pattern) {
+  for (int i = 0; i < steps; i++) pattern[i] = false;
 
   int bucket = 0;
   for (int i = 0; i < steps; i++) {
@@ -462,11 +371,10 @@ void makeEuclid(int steps, int hits, int rot, int *pattern) {
     if (bucket >= steps) {
       bucket -= steps;
       int idx = (i + rot) % steps;
-      pattern[idx] = 1;   // ★ int で 1 を入れる
+      pattern[idx] = true;
     }
   }
 }
-
 
 // =====================================================
 //  UI 全体描画
@@ -589,14 +497,13 @@ void updateProbability() {
 unsigned long holdStartHits = 0;
 unsigned long holdStartRot  = 0;
 
-unsigned long swPressStart = 0;
-
 // ランダムモード
 // 0 = Euclidランダム
 // 1 = ステップランダム
 // 2 = 両方ランダム
-int randomMode = 1;
+int randomMode = 0;
 
+unsigned long swPressStart = 0;
 
 bool updateEuclidEdit() {
 
@@ -676,61 +583,6 @@ bool updateEuclidEdit() {
   return changed;
 }
 
-// =====================================================
-// ★ ランダムモード実行
-//    randomMode:
-//      0 = Euclid ランダム（steps/hits/rotation）
-//      1 = Step ランダム（prob[]）
-//      2 = 両方ランダム
-// =====================================================
-void executeRandom() {
-
-    // -----------------------------------------
-    // ★ Euclid（リズム）→ 全モードで鳴く密度を統一
-    // -----------------------------------------
-    if (randomMode == 0 || randomMode == 2) {
-
-        steps = 16;                 // ★ 全モード8分固定
-        hits  = random(3, 6);       // ★ 鳴く密度を低めに統一（最重要）
-        rotation = random(0, steps);
-
-        makeEuclid(steps, hits, rotation, pattern);
-    }
-
-    // -----------------------------------------
-    // ★ Step（音程揺らぎ）→ 全モードで揺らぎを弱める
-    // -----------------------------------------
-    if (randomMode == 1 || randomMode == 2) {
-
-        for (int i = 0; i < 16; i++) {
-
-            // ★ 全モードで揺らぎ弱め（pattern が 1 になりすぎない）
-            pattern[i] = random(-1, 1);   // -1,0
-        }
-    }
-
-    // -----------------------------------------
-    // ★ Probability（鳴く確率）→ 全モードで統一
-    // -----------------------------------------
-    for (int i = 0; i < 16; i++) {
-
-        if (pattern[i] != 0) {
-            prob[i] = random(50, 80);   // ★ 鳴く確率を中程度に統一
-        } else {
-            prob[i] = random(10, 40);   // ★ 休符ステップは低め
-        }
-    }
-/*
-    drawTopText();
-    drawProbabilityBars();
-    drawStepBars();
-    drawStepDots();
-    drawRandomMode();
-*/
-}
-
-
-
 // ---- 音名テーブル（シャープ表記）----
 const char* noteNames[] = {
   "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"
@@ -740,6 +592,21 @@ const char* noteNames[] = {
 const char* getNoteName(uint8_t note) {
     int idx = note % 12;
     return noteNames[idx];
+}
+
+void executeRandom() {
+
+  if (randomMode == 0 || randomMode == 2) {
+    hits = random(1, steps + 1);
+    rotation = random(0, steps);
+    makeEuclid(steps, hits, rotation, pattern);
+  }
+
+  if (randomMode == 1 || randomMode == 2) {
+    for (int i = 0; i < 16; i++) {
+      pattern[i] = random(0, 2);
+    }
+  }
 }
 
 void drawRandomMode() {
@@ -826,17 +693,13 @@ void drawLFO() {
 }
 
 void sendNoteOn(uint8_t note, uint8_t velocity) {
-  uint8_t msg[3] = {0x90, note, velocity};
-  usb_midi.write(msg, 3);
-  // ★ Core1 (PRA32-U) へ内部MIDIブリッジ
-  midi_bridge_send_note_on(note, velocity);
+    uint8_t msg[3] = {0x90, note, velocity};
+    usb_midi.write(msg, 3);
 }
 
 void sendNoteOff(uint8_t note) {
-  uint8_t msg[3] = {0x80, note, 0};
-  usb_midi.write(msg, 3);
-  // ★ Core1 (PRA32-U) へ内部MIDIブリッジ
-  midi_bridge_send_note_off(note);
+    uint8_t msg[3] = {0x80, note, 0};
+    usb_midi.write(msg, 3);
 }
 
 const uint8_t scale[] = { 0, 2, 4, 7, 9 };  
@@ -889,18 +752,6 @@ void pushNoteDot(uint8_t note) {
   noteDots[239] = note;
 }
 
-// ---- Trill globals ----
-bool trillActive      = false;
-int  trillIndex       = 0;
-int  trillDir         = 1;
-int  trillCycleCount  = 0;
-int  trillCount       = 0;
-uint8_t trillBaseNote = 0;
-unsigned long trillNextTime    = 0;
-bool trillNoteOn      = false;
-uint8_t trillLastNote = 0;
-unsigned long trillNoteOffTime = 0;
-
 // ---- Track A ----
 uint8_t lastNoteA = 0;
 bool noteIsOnA = false;
@@ -908,8 +759,8 @@ unsigned long noteOffTimeA = 0;
 
 // ---- Track B ----
 // ---- テンポ（内部 BPM のみ）----
-int baseBPM  = 84;   // 基本 BPM
-int stepBPM  = 84;   // ステップ進行用 BPM
+int baseBPM  = 120;   // 基本 BPM
+int stepBPM  = 120;   // ステップ進行用 BPM
 
 void drawTopText() {
   char buf[32];
@@ -981,9 +832,7 @@ uint8_t generateArpMusical(uint8_t noteA, bool reachedPeak, uint8_t lastNoteA, i
     const int inScale[] = {0, 1, 5, 7, 8};
     const int scaleSize = 5;
 
-    bool goingUp = arpGoingUp;   // ← イベントの方向を使う
-
-    if (noteA <= 38) goingUp = true;
+    bool goingUp = (noteA > lastNoteA);
 
     // =====================================================
     // ★ フレーズの“意志”（12〜24音の長い方向性）
@@ -1077,167 +926,100 @@ uint8_t generateArpMusical(uint8_t noteA, bool reachedPeak, uint8_t lastNoteA, i
         if (arp > 96) arp -= 2;
     }
 
-    // ★ 安全レンジにクランプ（C2〜C7）
-    if (arp < 36) arp = 36;   // C2
-    if (arp > 96) arp = 96;   // C7
-
     return arp;
-}
-
-// =====================================================
-// ★ メインメロディ生成（陰音階＋パターン揺らぎ＋トリルフラグ）
-// =====================================================
-uint8_t generateNoteA(bool &trillFlagOut, int &degreeOut) {
-
-    const int inScale[] = {0, 1, 5, 7, 8};   // 陰音階
-    const int inSize = 5;
-
-    static int phraseDir = 1;   // +1=上行, -1=下降
-    static int degree = 2;      // 現在の度数
-
-    static int upCount = 0;
-    static int holdCount = 0;
-    static int holdTarget = 0;
-
-    trillFlagOut = false;
-
-    // =====================================================
-    // ★ pattern の影響（8分同期）
-    // =====================================================
-    auto applyPattern = [&](int deg) {
-        int idx = currentStep;   // ★ 8分のステップに同期
-        int p = pattern[idx];
-
-        if (p > 1) p = 1;
-        if (p < -1) p = -1;
-
-        deg += p;
-        deg = constrain(deg, 0, inSize - 1);
-        return deg;
-    };
-
-    // =====================================================
-    // ★ degree が端に張り付かないように跳ね返す
-    // =====================================================
-    auto bounce = [&](int &deg, int &dir) {
-        if (deg <= 0) {
-            deg = 1;
-            dir = +1;
-        }
-        if (deg >= inSize - 1) {
-            deg = inSize - 2;
-            dir = -1;
-        }
-    };
-
-    // =====================================================
-    // ★ 上行 → 下降切替
-    // =====================================================
-    if (phraseDir == 1) {
-        upCount++;
-        if (upCount >= 3 + random(0, 4)) {
-            phraseDir = -1;
-            upCount = 0;
-            holdCount = 0;
-            holdTarget = 0;
-        }
-    }
-
-    // =====================================================
-    // ★ 上行フェーズ
-    // =====================================================
-    if (phraseDir == 1) {
-
-        degree++;
-        bounce(degree, phraseDir);
-        degree = applyPattern(degree);
-
-        trillFlagOut = (random(0, 100) < 15);
-
-        uint8_t note = 50 + inScale[degree] + transpose;
-        lastNoteA = note;
-        degreeOut = degree;
-        return note;
-    }
-
-// =====================================================
-// ★ 下降フェーズ（1ステップにつき必ず1回だけ note を返す）
-// =====================================================
-if (phraseDir == -1) {
-
-    if (holdTarget == 0)
-        holdTarget = 2 + random(0, 3);
-
-    // ★ degree の更新だけ行う（音は返さない）
-    if (holdCount < holdTarget) {
-        holdCount++;
-
-        degree = applyPattern(degree);
-        bounce(degree, phraseDir);
-    }
-    else {
-        degree--;
-        bounce(degree, phraseDir);
-        degree = applyPattern(degree);
-
-        holdCount = 0;
-        holdTarget = 2 + random(0, 3);
-    }
-
-    // ★ ここで1回だけ note を返す（2連打完全防止）
-    uint8_t note = 50 + inScale[degree] + transpose;
-    lastNoteA = note;
-    degreeOut = degree;
-    return note;
-}
-
-    return lastNoteA;
-}
-
-// =====================================================
-// ★ トリルノート生成（陰音階内で上下揺れ）
-// =====================================================
-uint8_t generateTrillNote(uint8_t baseNote, int stepIndex) {
-
-    float curve;
-
-    if (stepIndex == 0) {
-        // ★ 最初の1発は必ず +1.2音（同音禁止）
-        curve = 1.2f;
-    } else {
-        // ★ 2発目以降は滑らかカーブ
-        curve = sin(stepIndex * 1.57f) * 1.8f;
-    }
-
-    float raw = baseNote + curve;
-
-    // ★ 陰音階に軽く吸着
-    const int scale[] = {0, 1, 5, 7, 8};
-    const int size = 5;
-
-    int pitch = ((int)raw - transpose) % 12;
-    if (pitch < 0) pitch += 12;
-
-    int best = scale[0];
-    int bestDiff = abs(pitch - scale[0]);
-
-    for (int i = 1; i < size; i++) {
-        int diff = abs(pitch - scale[i]);
-        if (diff < bestDiff) {
-            bestDiff = diff;
-            best = scale[i];
-        }
-    }
-
-    if (bestDiff <= 2) {
-        raw = (raw - pitch) + best;
-    }
-
-    return constrain((int)raw, 48, 96);
 }
 
 int downBias = 50;
 int upBias = 50;
+
+uint8_t generateNoteA(bool &reachedPeakOut, int &degreeOut) {
+
+    // 陰音階（in-scale）
+    const int inScale[] = {0, 1, 5, 7, 8};
+    const int scaleSize = 5;
+
+    // フレーズ方向（上昇 or 下降）
+    static int phraseDir = 1;
+
+    // ★ 息継ぎゼロ：フレーズは永遠に続く
+    // ★ 方向転換の確率を 2% → 1% に弱体化（下降が激減）
+    if (rand() % 100 < 1) {
+        phraseDir = -phraseDir;
+    }
+
+    // 現在のスケール度数を推定
+    int baseNote = lastNoteA - transpose;
+    int degree = 0;
+    int minDiff = 999;
+
+    for (int i = 0; i < scaleSize; i++) {
+        int diff = abs((baseNote % 12) - inScale[i]);
+        if (diff < minDiff) {
+            minDiff = diff;
+            degree = i;
+        }
+    }
+
+    // フレーズ方向に沿って動く
+    int move = phraseDir;
+
+    // ★ 歌のアクセント（20%）の下降成分を弱体化
+    //    → 上昇アクセントはそのまま、下降アクセントは 1/5 に弱体化
+    if (rand() % 100 < 20) {
+        int accent = (rand() % 2 == 0) ? 1 : -1;
+
+        if (accent < 0) {
+            // 下降アクセントは 20% → 4% に弱体化
+            if (rand() % 100 < 20) {
+                move -= 1;
+            }
+        } else {
+            move += 1;
+        }
+    }
+
+    // ★ 下降方向そのものを弱体化（phraseDir が -1 のとき）
+    if (phraseDir == -1) {
+        // 下降方向の動きは 20% の確率でしか採用しない
+        if (rand() % 100 >= 20) {
+            move = 0;  // 下降をキャンセル
+        }
+    }
+
+    degree += move;
+    degree = constrain(degree, 0, scaleSize - 1);
+
+    // ★ 山 or 谷の判定
+    bool reachedPeak   = (phraseDir == 1 && degree == scaleSize - 1);
+    bool reachedValley = (phraseDir == -1 && degree == 0);
+
+    reachedPeakOut = reachedPeak;
+    degreeOut      = degree;
+
+    // ★ 山・谷でオクターブ跨ぎ（自然な跳ね）
+    int octaveShift = 0;
+    if (reachedPeak  && rand() % 100 < 40) octaveShift = 12;
+    if (reachedValley && rand() % 100 < 40) octaveShift = -12;
+
+    // 実際の音に変換
+    int octave = 48;
+    int newNote = octave + inScale[degree] + octaveShift;
+
+    // 同じ音が続かないように
+    if (newNote == lastNoteA) {
+        degree = (degree + 1) % scaleSize;
+        newNote = octave + inScale[degree];
+    }
+
+    // 移調
+    newNote += transpose;
+
+    // 音域制限
+    newNote = constrain(newNote, 48, 96);
+
+    lastNoteA = newNote;
+    return newNote;
+}
 
 uint8_t lastNoteB = 36;   // C2
 bool noteIsOnB = false;
@@ -1269,11 +1051,22 @@ uint8_t generateNoteB() {
 // ★ モード切替インターバル
 // =====================================================
 unsigned long lastModeChange = 0;
-unsigned long modeInterval   = 10000;  // 初期値（あとでランダムに更新）
+const unsigned long modeInterval = 8000;
 
 // =====================================================
 // ★ モード切替インターバル
 // =====================================================
+void updateRandomMode() {
+    unsigned long now = millis();
+    if (now - lastModeChange < modeInterval) return;
+
+    randomMode = (randomMode + 1) % 3;
+    drawRandomMode();
+    executeRandom();
+
+    lastModeChange = now;
+}
+
 unsigned long ccDisplayTimer = 0;
 
 void drawCCValue(byte cc, byte value) {
@@ -1443,457 +1236,259 @@ void microBpmNudge() {
     baseBPM = constrain(baseBPM + n, 40, 260);
 }
 
-int snapToHeichoshi(int raw, int transpose) {
-
-    const int heichoshi[5] = {0, 1, 5, 7, 8};
-
-    int pitch = (raw - transpose) % 12;
-    if (pitch < 0) pitch += 12;
-
-    int best = heichoshi[0];
-    int bestDiff = abs(pitch - heichoshi[0]);
-
-    for (int i = 1; i < 5; i++) {
-        int diff = abs(pitch - heichoshi[i]);
-        if (diff < bestDiff) {
-            bestDiff = diff;
-            best = heichoshi[i];
-        }
-    }
-
-    return (raw - pitch) + best;
-}
-
-uint8_t generateArpStep(uint8_t baseNote, bool goingUp) {
-
-    int step;
-
-    if (baseNote <= 38) goingUp = true;
-
-    if (goingUp) {
-        int upChoices[] = { +2, +4, +5, +7, +9, +12 };
-        step = upChoices[rand() % 6];
-    } else {
-        int downChoices[] = { -1, -2, -3, -5, -7, -12 };
-        step = downChoices[rand() % 6];
-    }
-
-    // ★ 微妙な揺らぎ
-    if (rand() % 100 < 40) {
-        step += (rand() % 2 ? +1 : -1);
-    }
-
-    int raw = baseNote + step;
-
-    // ★ 平調子に吸着
-    int snapped = snapToHeichoshi(raw, transpose);
-
-    // ★ 安全レンジ
-    if (snapped < 36) snapped = 36;
-    if (snapped > 96) snapped = 96;
-
-    // ★ baseNote と同じなら強制的にずらす
-    if (snapped == baseNote) {
-        snapped += (goingUp ? +2 : -2);
-    }
-
-    return (uint8_t)snapped;
-}
-
-
-unsigned long silenceLength = 0;
-
 void setup() {
   Serial.begin(115200);
   delay(200);
- 
+  
   usb_midi.begin();  
   
-  //lcdInit();
+  sendStart();
   
-  //lcdFill(COLOR_BLACK);
+  lcdInit();
+  
+  // ★ ジョイスティック SW
+  pinMode(JOY_SW_PIN, INPUT_PULLUP);
+
+  // ★ 実際に存在する4ボタンだけ
+  pinMode(21, INPUT_PULLUP);  // LEFT
+  pinMode(19, INPUT_PULLUP);  // DOWN
+  pinMode(17, INPUT_PULLUP);  // UP
+  pinMode(15, INPUT_PULLUP);  // RIGHT
+
+  // ★ ジョイスティック X/Y
+  pinMode(JOY_X_PIN, INPUT);
+  pinMode(JOY_Y_PIN, INPUT);
+
+  lcdFill(COLOR_BLACK);
 
   for (int i = 0; i < 16; i++) prob[i] = 100;
 
-  //drawUI();
+  makeEuclid(steps, hits, rotation, pattern);
 
-  executeRandom();
-  nextArpEventTime = millis() + random(10000, 20000);  // 10〜20秒
-  transpose += 5;
-  baseBPM = max(20, baseBPM - 4);   // ★ 基準テンポを4下げる
-
-  // ★ 起動直後にアルペジオを強制スタート
-  lastNoteA = 52 + transpose;   // E3 を基準に（あなたの希望）
-
-  // ★ 起動時アルペジオを長くする
-  arpEventActive = true;
-  arpEventCount = 0;
-  arpRepeatCount = 0;
-
-  // ★ 起動時だけ長く（10〜20回の往復）
-  arpRepeatTarget = random(10, 21);
-
-  // ★ 1方向の音数も増やすための初期化
-  arpGoingUp = (rand() % 100 < 60);
-
-  // ★ すぐに開始
-  nextArpStepTime = millis();
-}
-
-int phraseDir = 1;   // +1 = 上行, -1 = 下降
-
-// 平調子（主音＝D）
-const int heiScale[] = {2, 4, 7, 9, 11};
-const int heiSize = 5;
-
-// =====================================================
-// ★ 平調子：滑らか上行（トリル用）
-// =====================================================
-uint8_t generateSmoothRise(uint8_t base, int stepIndex) {
-
-    // 滑らか上昇カーブ（0.4〜2.4音）
-    float curve = 0.4f + stepIndex * 0.35f;
-    int raw = base + (int)curve;
-
-    // 平調子に軽く吸着
-    int pitch = raw % 12;
-    int best = heiScale[0];
-    int bestDiff = abs(pitch - heiScale[0]);
-
-    for (int i = 1; i < heiSize; i++) {
-        int diff = abs(pitch - heiScale[i]);
-        if (diff < bestDiff) {
-            bestDiff = diff;
-            best = heiScale[i];
-        }
-    }
-
-    if (bestDiff <= 2) {
-        raw = (raw - pitch) + best;
-    }
-
-    return constrain(raw, 48, 96);
-}
-
-// =====================================================
-// ★ 平調子：滑らか下降（メインライン用）
-// =====================================================
-uint8_t generateSmoothFall(uint8_t base, int stepIndex) {
-
-    // 滑らか下降カーブ（-0.4〜-2.4音）
-    float curve = -0.4f - stepIndex * 0.35f;
-    int raw = base + (int)curve;
-
-    // 平調子に軽く吸着
-    int pitch = raw % 12;
-    int best = heiScale[0];
-    int bestDiff = abs(pitch - heiScale[0]);
-
-    for (int i = 1; i < heiSize; i++) {
-        int diff = abs(pitch - heiScale[i]);
-        if (diff < bestDiff) {
-            bestDiff = diff;
-            best = heiScale[i];
-        }
-    }
-
-    if (bestDiff <= 2) {
-        raw = (raw - pitch) + best;
-    }
-
-    return constrain(raw, 48, 96);
-}
-
-void sendControlChange(uint8_t cc, uint8_t value, uint8_t channel = 0) {
-    midi_bridge_send_cc(cc, value, channel);
-}
-
-void sendAllNotesOff() {
-    for (int ch = 0; ch < 16; ch++) {
-        sendControlChange(123, 0, ch);  // CC123 = All Notes Off
-    }
+  drawUI();
 }
 
 void loop() {
-
-    unsigned long now = millis();
-
-#if !DISABLE_SILENCE
-    static bool silenceActive = false;
-    static unsigned long silenceEndTime = 0;
-    static unsigned long nextSilenceTime = millis() + random(25000, 30000);
-#endif
-
-#if !DISABLE_SILENCE
-    // ★ 20秒安全装置：無音中は動かない、アルペジオが20秒鳴いていない時だけ
-    if (!silenceActive && !arpEventActive && (now - lastArpActivity > 20000)) {
-
-        // 無音も一旦キャンセル
-        silenceActive   = false;
-        silenceEndTime  = 0;
-
-        // ★ 次の無音は必ず30秒以上未来に飛ばす（最重要）
-        nextSilenceTime = now + 30000;
-
-        // ★ キーもリセット（または上方向に寄せる）
-        transpose = 3;   // もしくは +12 など
-    
-        // アルペジオ完全リセット
-        arpEventActive  = true;
-        arpEventCount   = 0;
-        arpRepeatCount  = 0;
-        arpRepeatTarget = random(4, 7);
-        arpGoingUp      = (rand() % 100 < 60);
-        arpFlipWidth    = random(2, 5);
-
-        nextArpStepTime  = now;
-        nextArpEventTime = now + random(5000, 15000);
-        lastArpActivity = now;
-    }
-#endif
-    
-    readButtons();
     readJoystick();
+    readButtons();
 
-#if !DISABLE_SILENCE
-    // ★ 無音処理（ミュート専用、安全版）
-    if (!silenceActive && now >= nextSilenceTime) {
+    // ★ USB-MIDI CC 受信（Adafruit_USBD_MIDI 正式版）
+    int b;
+    while ((b = usb_midi.read()) != -1) {
 
-        silenceActive = true;
+      static uint8_t status = 0;
+      static uint8_t data1  = 0;
+      static bool waitingForData1 = false;
+      static bool waitingForData2 = false;
 
-        // 無音の長さ（1.8〜4.0秒）
-        silenceLength  = 1800 + random(0, 2200);
-        silenceEndTime = now + silenceLength;
+      uint8_t byteIn = (uint8_t)b;
 
-        // 次の無音タイミング（25〜30秒）
-        nextSilenceTime = now + random(25000, 30000);
+      // ステータスバイト（0x80〜0xEF）
+      if (byteIn & 0x80) {
+        status = byteIn;
+        waitingForData1 = true;
+        waitingForData2 = false;
+        continue;
+      }
 
-        // ★ 音だけ止める（アルペジオ状態には触らない）
-        sendAllNotesOff();
-        if (noteIsOnA) { sendNoteOff(lastNoteA); noteIsOnA = false; }
-        if (trillNoteOn) { sendNoteOff(trillLastNote); trillNoteOn = false; }
-        if (noteIsOnB) { sendNoteOff(lastNoteB); noteIsOnB = false; }
-        lastArpActivity = now;
-        return;  // 無音開始直後はここで終了
-    }
-#endif
-#if !DISABLE_SILENCE
-    if (silenceActive) {
+      // データ1
+      if (waitingForData1) {
+        data1 = byteIn;
+        waitingForData1 = false;
+        waitingForData2 = true;
+        continue;
+      }
 
-        if (now >= silenceEndTime) {
+      // データ2 → ここで1メッセージ完成
+      if (waitingForData2) {
+        uint8_t data2 = byteIn;
+        waitingForData2 = false;
 
-            // ★ 無音終了：キー変更だけ行う（アルペジオには触らない）
-            float factor = (float)(silenceLength - 1800) / (4000 - 1800);
-            int upBias = 60 + (int)(factor * 30);
-
-            int r = random(0, 100);
-            int delta = (r < upBias) ? +5 : -5;
-            transpose += delta;
-
-            if (transpose > 24) transpose = 24;
-            if (transpose < -24) transpose = -24;
-
-            drawTopText();
-
-            silenceActive = false;
-            lastArpActivity = now;   // ★ 追加
-            
-            return;  // 無音終了直後もここで抜ける
-
-        } else {
-            // ★ 無音中は return しない！
-            // 音を出さないだけで、アルペジオの状態は進める
-            // つまりここは何もせず下へ流す
+        // ★ CC メッセージ（0xB0〜0xBF）
+        if ((status & 0xF0) == 0xB0) {
+            handleCC(data1, data2);
         }
-    }
-#endif
-
-    // ★ 呼吸する BPM（sin 波で ±5 揺らす）
-    static unsigned long breathStart = millis();
-    static unsigned long breathDuration = 8000 + random(0, 7000);  // 8〜15秒で1呼吸
-
-    float t = (float)(now - breathStart) / (float)breathDuration;  // 0.0〜1.0
-
-    if (t >= 1.0f) {
-        breathStart = now;
-        breathDuration = 8000 + random(0, 7000);
-        t = 0.0f;
+      }
     }
 
-    // ★ sin 波（吸う→吐く）
-    float wave = sin(t * 3.14159265f * 2.0f);  // -1〜+1
+    // =====================================================
+    // ★ 休止フラグを立てる（まだ休止しない）
+    // =====================================================
+    if (!inRest && millis() - lastRest >= nextRestInterval) {
+        lastRest = millis();
+        inRest = true;
+        restStepsRemaining = 7;  // 7ステップ休止
+        nextRestInterval = 14000 + rand() % 10000; // 14〜24秒
+    }
 
-    // ★ ±5 BPM の揺らぎ
-    int delta = (int)(wave * 5.0f);
-
-    // ★ 呼吸 BPM
-    stepBPM = baseBPM + delta;
-    if (stepBPM < 30) stepBPM = 30;
-
-    // ★ 自動トランスポーズ（4度 = 5半音）をランダムで発生
-    static unsigned long nextTransposeTime = millis() + random(5000, 15000);
-
-    if (now >= nextTransposeTime) {
-
-        // +5 または -5 をランダムに選ぶ
-        int delta = (rand() % 2 == 0) ? +5 : -5;
-
-        transpose += delta;
-
-        // 安全範囲に制限
-        if (transpose > 24) transpose = 24;
-        if (transpose < -24) transpose = -24;
-
-        // 次の発生タイミング（5〜15秒）
-        nextTransposeTime = now + random(5000, 15000);
-
-        // UI更新
+    // =====================================================
+    // ★ キーチェンジ
+    // =====================================================
+    if (millis() - lastKeyChange >= nextKeyChangeInterval) {
+        lastKeyChange = millis();
+        transpose = 2 + rand() % 3;
         drawTopText();
+        nextKeyChangeInterval = 18000 + rand() % 14000;
     }
 
-    // ★ BPM を ±2 揺らす（ゆっくり呼吸するように）
-    static unsigned long lastBpmChange = 0;
-    if (now - lastBpmChange > 500) {  // 0.5秒ごとにゆっくり揺らす
-        lastBpmChange = now;
+    updateProbability();
+    bool euclidChanged = updateEuclidEdit();  // ← さっきの bool 版
 
-        int delta = random(-2, 3);  // -3〜+3
-        stepBPM = baseBPM + delta;
-
-        // 下限を安全に確保
-        if (stepBPM < 30) stepBPM = 30;
-    }
-
-    // =====================================================
-    // ★ 5〜15秒ランダムでアルペジオイベント（2〜4回の上下）
-    // =====================================================
-
-    // ---- イベント開始 ----
-    if (!arpEventActive && now >= nextArpEventTime) {
-        /*
-        arpEventActive = true;
-
-        arpEventCount = 0;
-        arpRepeatCount = 0;
-
-        arpRepeatTarget = random(4, 7);   // ★ 2〜4回の往復
-        arpGoingUp = (rand() % 100 < 60); // 最初は上昇60%
-
-        // ★ 反転幅をイベント開始時に決める（安定化の核心）
-        arpFlipWidth = random(2, 5);      // 2〜4音で反転
-
-        nextArpStepTime = now;
-
-        // ★ 開始時点で活動扱いにする
-        lastArpActivity = now;
-        */
-        arpEventActive  = true;
-        arpEventCount   = 0;
-        arpRepeatCount  = 0;
-        arpRepeatTarget = random(4, 7);
-        arpGoingUp      = (rand() % 100 < 60);
-        arpFlipWidth    = random(2, 5);
-        nextArpStepTime = now;
-        lastArpActivity = now;
-    }
-
-
-    // ---- イベント中（32分アルペジオ）----
-    if (arpEventActive) {
-
-        unsigned long interval = 60000UL / stepBPM / 4;  // 8分
-        unsigned long arpInterval = interval / 4;        // ★ 32分音符
-
-        if (now >= nextArpStepTime) {
-
-            // ★ 上昇 or 下降の1音
-            uint8_t note = generateArpStep(lastNoteA, arpGoingUp);
-            sendNoteOn(note, 90);
-            lastNoteA = note;
-
-            lastArpActivity = now;
-
-            nextArpStepTime = now + arpInterval;
-            arpEventCount++;
-
-            // ★ 反転幅は固定（イベント開始時に決めた値）
-            if (arpEventCount >= arpFlipWidth) {
-                arpEventCount = 0;
-                arpGoingUp = !arpGoingUp;   // ★ 方向反転
-                arpRepeatCount++;
-
-                // ★ 2〜4回の往復が終わったら終了
-                if (arpRepeatCount >= arpRepeatTarget) {
-                    arpEventActive = false;
-
-                    // ★ 無音中でも確実に未来に飛ばす
-                    unsigned long base = millis();  
-                    nextArpEventTime = base + random(3000, 8000);
-
-                    // ★ 安全のため活動扱いにする
-                    lastArpActivity = base;
-                }
-            }
-        }
-    }
-
-    // =====================================================
-    // ★ モード切替（10〜20秒）
-    // =====================================================
-    static unsigned long lastModeChange = 0;
-    static unsigned long modeInterval = 10000 + random(0, 10000);
-
-    if (now - lastModeChange >= modeInterval) {
-        lastModeChange = now;
-        modeInterval = 10000 + random(0, 10000);
-
-        randomMode = (randomMode + 1) % 3;
-        currentStep = -1;
-        executeRandom();
-    }
-
-    // =====================================================
-    // ★ メインステップ（8分）
-    // =====================================================
     static unsigned long lastStep = 0;
+
+    // =====================================================
+    // ★ BPM大揺らぎ（B）
+    // =====================================================
+    if (currentStep == 0) {
+        int jump = (rand() % 100 < 70)
+            ? random(20, 90)
+            : -random(10, 40);
+
+        baseBPM = constrain(baseBPM + jump, 40, 260);
+
+        microBpmNudge();  // B：大揺らぎ直後に微細揺らぎ
+    }
+
+    stepBPM = constrain(baseBPM + random(-10, 11), 40, 260);
+
+    // ★ 8分音符の基準
     unsigned long interval = 60000UL / stepBPM / 4;
 
-    if (now - lastStep >= interval) {
-        lastStep = now;
+    // =====================================================
+    // ★ ゴースト弱め（8分中心）
+    // =====================================================
+    int ghostRoll = rand() % 100;
+    if (ghostRoll < 1) interval = interval * 3 / 4;
+    else if (ghostRoll < 4) interval = interval * 4 / 5;
+    else if (ghostRoll < 9) interval = interval * 5 / 6;
 
-        if (!isPlaying) {
-            if (noteIsOnA) { sendNoteOff(lastNoteA); noteIsOnA = false; }
-            return;
+    // =====================================================
+    // ★ NoteOff
+    // =====================================================
+    if (noteIsOnA && millis() >= noteOffTimeA) {
+        sendNoteOff(lastNoteA);
+        noteIsOnA = false;
+    }
+
+    // =====================================================
+    // ★ ステップ進行（8分音符）※ isPlaying でガード
+    // =====================================================
+    if (isPlaying && millis() - lastStep >= interval) {
+        lastStep = millis();
+
+        // =====================================================
+        // ★ E：Euclid パターン切替で微細揺らぎ
+        // =====================================================
+        if (euclidChanged) {
+            microBpmNudge();
         }
 
-        currentStep = (currentStep + 1) % steps;
+        // =====================================================
+        // ★ 休止ステップ（7ステップ連続）
+        // =====================================================
+        if (inRest) {
+
+            if (noteIsOnA) sendNoteOff(lastNoteA);
+            noteIsOnA = false;
+
+            restStepsRemaining--;
+
+            if (restStepsRemaining <= 0) {
+                inRest = false;  // 7ステップ終わったら解除
+            }
+
+            currentStep = (currentStep + 1) % 16;
+            drawStepBars();
+            drawStepDots();
+            return;  // このステップは完全に無音
+        }
+
+        // =====================================================
+        // ★ メインノートは毎ステップ鳴らす（8分音符）
+        // =====================================================
+        if (noteIsOnA) sendNoteOff(lastNoteA);
+
+        bool reachedPeak = false;
+        int degree = 0;
+
+        uint8_t noteA = generateNoteA(reachedPeak, degree);
+
+        bool goingUpPhrase = (noteA > lastNoteA);
+
+        int velA = 90 + random(-20, 20);
+        sendNoteOn(noteA, velA);
+        noteIsOnA = true;
+
+        drawTopText();
+
+        float sustainFactor = 1.25;
+        if (goingUpPhrase) sustainFactor = 1.30;
+        if (!goingUpPhrase) sustainFactor = 1.15;
+        if (degree == 0) sustainFactor = 1.35;
+
+        // sustainBias を使うならここで掛ける
+        // sustainFactor *= (sustainBias / 100.0f);
+
+        noteOffTimeA = millis() + (unsigned long)(interval * sustainFactor);
+
+        lastNoteA = noteA;
+        pushNoteDot(noteA);
+
+        // =====================================================
+        // ★ S：フレーズ意志切替（reachedPeak）で微細揺らぎ
+        // =====================================================
+        if (reachedPeak) {
+            updateRandomMode();
+            microBpmNudge();  // S 揺らぎ
+        }
+
+        // =====================================================
+        // ★ Euclid はアルペジオ専用
+        // =====================================================
+        bool euclidHit = pattern[currentStep];
+
+        int arpCount = 0;
+
+        if (euclidHit) {
+            if (reachedPeak) {
+                arpCount = 3 + rand() % 3;
+            }
+            else if (!goingUpPhrase) {
+                arpCount = (rand() % 100 < 97) ? 0 : 1;
+            }
+            else if (degree == 0) {
+                arpCount = rand() % 2;
+            }
+            else {
+                arpCount = 1 + rand() % 2;
+            }
+        }
+
+        unsigned long arpInterval = interval / 2;
+
+        for (int i = 0; i < arpCount; i++) {
+            delay(arpInterval);
+
+            uint8_t arp = generateArpMusical(noteA, reachedPeak, lastNoteA, degree);
+
+            int velArp = 75 + random(-15, 20);
+
+            sendNoteOn(arp, velArp);
+            delay(arpInterval);
+            sendNoteOff(arp);
+        }
+
+        currentStep = (currentStep + 1) % 16;
+
         drawStepBars();
         drawStepDots();
-
-        if (noteIsOnA && now >= noteOffTimeA) {
-            sendNoteOff(lastNoteA);
-            noteIsOnA = false;
-        }
-
-        // ---- メインノート ----
-        bool fire = true;
-
-        if (fire && !arpEventActive) {  
-            // ★ アルペジオ中はメインノートを鳴らさない（自然な間）
-            bool trillFlag = false;
-            int dummyDegree = 0;
-
-            uint8_t noteA = generateNoteA(trillFlag, dummyDegree);
-
-            int velA = 90 + random(-20, 20);
-            sendNoteOn(noteA, velA);
-            noteIsOnA = true;
-            noteOffTimeA = now + (interval / 4);
-
-            //lastNoteA = noteA;
-            
-            pushNoteDot(noteA);
-            drawNoteDots();
-            drawTopText();
-        }
     }
+
+    drawNoteDots();
+    
+    if (millis() - ccDisplayTimer > 1000) {
+      // 下部エリアを消す
+      lcdFillRect(0, 220, 240, 20, 0x0000);
+    }
+
 }
