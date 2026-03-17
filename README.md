@@ -7,7 +7,7 @@ In v1.2.0, while building on the existing core functionality, we significantly e
 
 ## Key Enhancements in v1.2.0
 
-### ? Official Introduction of an LCD-Based User Interface
+###  Official Introduction of an LCD-Based User Interface
 
 In v1.2.0, an LCD-centered user interface has been fully implemented.
 
@@ -21,7 +21,7 @@ the UI is designed with the goal of becoming
 
 ---
 
-### ? Audio Output via PCM5102 (I2S DAC)
+###  Audio Output via PCM5102 (I2S DAC)
 
 In addition to traditional MIDI output,  
 v1.2.0 introduces **audio output using a PCM5102 I2S DAC**.
@@ -60,7 +60,7 @@ KOSMOS v1.2.0 is not the final version, but with the combination of:
 - Audio Output
 - Hardware Integration
 
-it represents a key transition point?from a  
+it represents a key transition pointfrom a  
 **“concept prototype” to a “practical musical instrument.”**
 
 Through continued testing and refinement on real hardware,  
@@ -118,7 +118,7 @@ Detailed wiring examples and sketch structure will be added to the repository pr
 
 ## PCM5102 (I2S DAC)
 
-### Complete Non?interference with LCD, USB, and Expanders
+### Complete Noninterference with LCD, USB, and Expanders
 
 | PCM5102 Signal | Pico GPIO  | Notes            |
 | -------------- | ---------- | ---------------- |
@@ -128,7 +128,7 @@ Detailed wiring examples and sketch structure will be added to the repository pr
 | VCC            | 5V or 3.3V | Module dependent |
 | GND            | GND        |                  |
 
-**GPIO2?4 do not conflict with LCD or USB**
+**GPIO24 do not conflict with LCD or USB**
 
 ***
 
@@ -169,8 +169,8 @@ Detailed wiring examples and sketch structure will be added to the repository pr
 
 ### Zero Pin Conflicts
 
-*   LCD: GPIO16?21
-*   Audio: GPIO2?4  
+*   LCD: GPIO1621
+*   Audio: GPIO24  
     → **Completely independent**
 
 ### Easy Core Separation
@@ -180,7 +180,7 @@ Detailed wiring examples and sketch structure will be added to the repository pr
 
 ### Easy Expansion
 
-*   GPIO6?15 fully available
+*   GPIO615 fully available
 *   Room for Omnibus Expander, clock input, LEDs, etc.
 
 ***
@@ -199,7 +199,7 @@ Detailed wiring examples and sketch structure will be added to the repository pr
 ### Wiring Length
 
 *   Keep **BCK / LRCK / DIN as short as possible**
-*   Jumper wires: **5?10 cm maximum recommended**
+*   Jumper wires: **510 cm maximum recommended**
 ***
 # Node Diagram (Signal & Responsibility Overview)
 ```mermaid
