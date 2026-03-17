@@ -7,6 +7,8 @@ v1.1.0 introduces a major evolution:
 KOSMOS now integrates the **PRA32-U synthesizer engine** (by ISGK Instruments) on Core1,  
 allowing the device to **generate sound directly without any external synthesizer**.
 
+This release transforms KOSMOS into a fully self‑contained **generative synthesizer**.
+
 ---
 
 ## 🌟 New in v1.1.0
@@ -134,5 +136,6 @@ Notes:
 ---
 
 ## ✨ Special Thanks
+
 - **ISGK Instruments** — for providing the PRA32-U Core1 implementation  
 - The generative music & DIY synth community  
