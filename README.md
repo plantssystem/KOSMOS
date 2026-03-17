@@ -192,7 +192,6 @@ Detailed wiring examples and sketch structure will be added to the repository pr
 *   Most modules work **with pins left unconnected**
 *   If no audio output is observed:
 
-<!---->
 
     MUTE → GND
 
@@ -201,44 +200,7 @@ Detailed wiring examples and sketch structure will be added to the repository pr
 *   Keep **BCK / LRCK / DIN as short as possible**
 *   Jumper wires: **510 cm maximum recommended**
 ***
-# Node Diagram (Signal & Responsibility Overview)
-```mermaid
-graph LR
-  %% Layout: left-to-right
-  %% === Nodes ===
-  subgraph RP2040["RP2040 (KOSMOS)"]
-    C0["Core0<br/>(Sequencer / UI / MIDI)"]
-    C1["Core1<br/>(Audio / I2S streaming)"]
-  end
-
-  subgraph Buses[On-chip Buses & IO]
-    I2S["I2S<br/>(BCLK / LRCK / DOUT)"]
-    SPI["SPI<br/>(SCK / MOSI / DC / CS / RST / BL)"]
-    GPIO["GPIO<br/>(Buttons / Encoders / LEDs)"]
-  end
-
-  subgraph Peripherals[Peripherals]
-    LCD[Waveshare LCD]
-    DAC["PCM5102<br/>(I2S DAC)"]
-  end
-
-  %% === Connections (logical/role-based) ===
-  %% Cores to buses
-  C0 -->|control / queueing| I2S
-  C1 -->|audio samples out| I2S
-
-  C0 -->|draw commands| SPI
-  C0 -->|poll/interrupt| GPIO
-
-  %% Buses to devices
-  I2S -->|BCLK / LRCK / DOUT| DAC
-  SPI -->|SCK / MOSI / DC / CS / RST / BL| LCD
-  GPIO -->|inputs/outputs| LCD
-  GPIO -->|status LED etc.| DAC
-
-  %% Cross-core cooperation
-  C0 <-.->|messages / ring buffer| C1
-  ```
+ ```
 
 ## 1) Generative Sequencer Dataflow 
 ```mermaid
