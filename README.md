@@ -264,7 +264,7 @@ graph LR
   QUEUE --> MIDI
   QUEUE --> AUDIO
   ```
-## 2)  Timing & Scheduling (Core collaboration and queues)Generative Sequencer  Dataflow 
+## 2)  Timing & Scheduling (Core collaboration and queues) 
 ```mermaid
 sequenceDiagram
   participant CLK as Clock (Internal/MIDI)
