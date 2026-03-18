@@ -4,7 +4,6 @@ KOSMOS is a **compact Generative MIDI Sequencer** project based on the Raspberry
 In v1.2.0, while building on the existing core functionality, we significantly enhance the **user interface and audio output**, aiming to bring the hardware one step closer to a more complete and refined form.
 
 <img src="docs/screenshots/KOSMOS_02.JPG" width="400">
----
 
 ## Key Enhancements in v1.2.0
 
