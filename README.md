@@ -1,4 +1,4 @@
-KOSMOS  Generative MIDI Sequencer for RP2040
+# KOSMOS  Generative MIDI Sequencer for RP2040
 
 KOSMOS is a compact generative MIDI sequencer running on the RP2040.
 This project includes software, hardware design files, and presets.
