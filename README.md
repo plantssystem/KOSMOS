@@ -5,6 +5,10 @@ In v1.2.0, while building on the existing core functionality, we significantly e
 
 <img src="docs/screenshots/KOSMOS_02.JPG" width="400">
 
+## Demo Video
+
+[![KOSMOS v1.2.0 Demo](https://img.youtube.com/vi/3NyKyGo-T-A/0.jpg)](https://www.youtube.com/shorts/3NyKyGo-T-A)
+
 ## Key Enhancements in v1.2.0
 
 ###  Official Introduction of an LCD-Based User Interface
