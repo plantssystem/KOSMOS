@@ -1,11 +1,25 @@
-/* KOSMOS + PRA32-U (All-in-One: Pico Audio Pack version) */
+/* KOSMOS + PRA32-U (All-in-One: PCM5102 version) */
 #include <Arduino.h>
 
 // Optional: give Core1 8KB stack if needed
 bool core1_separate_stack = true;
 
-// ----------------- Internal MIDI Bridge (SPSC) -----------------
+// ----------------------- PRA32-U on Core1 (I2S + PCM5102A) ----------------------
+#include <I2S.h>
 
+#define PRA32_U_VERSION "v3.3.0 "
+#define PRA32_U_MIDI_CH (0)
+
+// I2S / DAC ピン定義
+#define PRA32_U_I2S_DAC_MUTE_OFF_PIN (22)
+#define PRA32_U_I2S_DATA_PIN  (28)
+#define PRA32_U_I2S_BCLK_PIN  (26)  // LRCLK = BCLK+1 → GP27
+
+// PRA32-U のバッファ設定（使わないが残しておいてOK）
+#define PRA32_U_I2S_BUFFERS      (4)
+#define PRA32_U_I2S_BUFFER_WORDS (64)
+
+// 内部 MIDI ブリッジ（すでにあなたのコードにあるやつ）
 enum MidiEvType : uint8_t { EV_NOTE_ON=0, EV_NOTE_OFF=1, EV_CC=2 };
 struct MidiEvent { uint8_t type, d1, d2, ch; };
 namespace MidiQ {
@@ -13,54 +27,57 @@ namespace MidiQ {
   inline bool push(const MidiEvent& ev){uint32_t h=head,n=(h+1)%QSIZE; if(n==tail) return false; q[h]=ev; head=n; return true;}
   inline bool pop(MidiEvent& out){uint32_t t=tail; if(t==head) return false; out=q[t]; tail=(t+1)%QSIZE; return true;}
 }
-inline void midi_bridge_send_note_on(uint8_t note,uint8_t vel,uint8_t ch=0){MidiEvent ev{EV_NOTE_ON,note,vel,ch};MidiQ::push(ev);}  
+inline void midi_bridge_send_note_on(uint8_t note,uint8_t vel,uint8_t ch=0){Serial.println("Core0: push NoteOn to queue");MidiEvent ev{EV_NOTE_ON,note,vel,ch};MidiQ::push(ev);}  
 inline void midi_bridge_send_note_off(uint8_t note,uint8_t ch=0){MidiEvent ev{EV_NOTE_OFF,note,0,ch};MidiQ::push(ev);}  
 inline void midi_bridge_send_cc(uint8_t cc,uint8_t val,uint8_t ch=0){MidiEvent ev{EV_CC,cc,val,ch};MidiQ::push(ev);}  
 
-// ----------------------- PRA32-U on Core1 (I2S 9/10/11) ----------------------
-#include <I2S.h>
-#define PRA32_U_VERSION "v3.3.0 "
-#define PRA32_U_MIDI_CH (0)
-#define PRA32_U_I2S_DAC_MUTE_OFF_PIN (22)
-#define PRA32_U_I2S_DATA_PIN  (9)
-#define PRA32_U_I2S_BCLK_PIN  (10)  // LRCLK = 11（= BCLK+1）
-#define PRA32_U_I2S_SWAP_BCLK_AND_LRCLK_PINS (false)
-#define PRA32_U_I2S_SWAP_LEFT_AND_RIGHT     (false)
-#define PRA32_U_I2S_BUFFERS      (4)
-#define PRA32_U_I2S_BUFFER_WORDS (64)
-
-// Define g_midi_ch BEFORE including the synth headers
+// PRA32-U synth 用のグローバル
 uint8_t g_midi_ch = PRA32_U_MIDI_CH;
 #include "pra32-u-common.h"
 #include "pra32-u-synth.h"
 
-PRA32_U_Synth g_synth; I2S g_i2s_output(OUTPUT);
+PRA32_U_Synth g_synth;
 
-void __not_in_flash_func(setup1)(){
-  g_i2s_output.setSysClk(SAMPLING_RATE);
-  g_i2s_output.setFrequency(SAMPLING_RATE);
-  g_i2s_output.setDATA(PRA32_U_I2S_DATA_PIN);
-  g_i2s_output.setBCLK(PRA32_U_I2S_BCLK_PIN); // LRCLK implicit = 11
-  if (PRA32_U_I2S_SWAP_BCLK_AND_LRCLK_PINS) g_i2s_output.swapClocks();
-  g_i2s_output.setBitsPerSample(16);
-  g_i2s_output.setBuffers(PRA32_U_I2S_BUFFERS, PRA32_U_I2S_BUFFER_WORDS);
-  g_i2s_output.begin();
-  pinMode(PRA32_U_I2S_DAC_MUTE_OFF_PIN, OUTPUT);
-  digitalWrite(PRA32_U_I2S_DAC_MUTE_OFF_PIN, HIGH); // unmute
-  g_synth.initialize();
+// 標準 I2S インスタンス
+I2S i2s(OUTPUT);
+
+#include "pico/multicore.h"
+
+// ------------------------------------------------------
+// Core1: メイン処理（I2S + シンセ + MIDI受信）
+// ------------------------------------------------------
+void __not_in_flash_func(core1_main)() {
+
+    g_synth.initialize();
+    g_synth.program_change(PROGRAM_NUMBER_DEFAULT);
+
+    i2s.setBCLK(26);
+    i2s.setDATA(28);
+    i2s.setBitsPerSample(16);
+    i2s.setFrequency(48000);
+    i2s.begin();
+
+    const int N = 64;
+    int16_t Lbuf[N], Rbuf[N];
+
+    while (true) {
+
+        MidiEvent ev;
+        while (MidiQ::pop(ev)) {
+            if (ev.type == EV_NOTE_ON)       g_synth.note_on(ev.d1, ev.d2);
+            else if (ev.type == EV_NOTE_OFF) g_synth.note_off(ev.d1);
+        }
+
+        for (int i = 0; i < N; i++) {
+            Lbuf[i] = g_synth.process(Rbuf[i]);
+        }
+
+        for (int i = 0; i < N; i++) {
+            i2s.write(Lbuf[i]);
+            i2s.write(Rbuf[i]);
+        }
+    }
 }
-
-void __not_in_flash_func(loop1)(){
-  MidiEvent ev; while(MidiQ::pop(ev)){
-    if(ev.type==EV_NOTE_ON)  g_synth.note_on(ev.d1, ev.d2);
-    else if(ev.type==EV_NOTE_OFF) g_synth.note_off(ev.d1);
-    else {}
-  }
-  int16_t L[PRA32_U_I2S_BUFFER_WORDS], R[PRA32_U_I2S_BUFFER_WORDS];
-  for(uint32_t i=0;i<PRA32_U_I2S_BUFFER_WORDS;i++) L[i]=g_synth.process(R[i]);
-  for(uint32_t i=0;i<PRA32_U_I2S_BUFFER_WORDS;i++) g_i2s_output.write16(L[i], R[i]);
-}
-
 
 // ----------------------- Core0: KOSMOS (patched) -----------------------
 #include <Arduino.h>
@@ -83,7 +100,6 @@ Adafruit_USBD_MIDI usb_midi;
 #define COLOR_DARK_GRAY 0x2104
 
 // ==== Waveshare Pico-LCD-1.3 ピン定義 ====
-/*
 #define LCD_DC   8
 #define LCD_CS   9
 #define LCD_RST 12
@@ -91,18 +107,6 @@ Adafruit_USBD_MIDI usb_midi;
 #define LCD_SCK 10
 #define LCD_MOSI 11
 #define LCD_SPI SPI1
-*/
-// ==== Waveshare Pico-LCD-1.3 ピン定義（SPI0版・衝突ゼロ） ====
-#define LCD_DC    8
-#define LCD_CS    5
-#define LCD_RST  12
-#define LCD_BL   13
-
-#define LCD_SCK  18
-#define LCD_MOSI 19
-#define LCD_SPI  SPI   // SPI0 を使用
-
-
 
 #define KEY_A_PIN    15
 #define KEY_B_PIN    17
@@ -251,7 +255,8 @@ int arpRepeatTarget = 0;
 bool arpGoingUp = true;
 int arpFlipWidth = 3;
 unsigned long lastArpActivity = 0;
-
+unsigned long lastMainStepTime = 0;
+unsigned long nextSilenceTime = 0;
 
 int noteToY(uint8_t note) {
     return map(note, 36, 84, 240, 150);  // 下が低音、上が高音
@@ -472,117 +477,97 @@ void makeEuclid(int steps, int hits, int rot, int *pattern) {
 //  UI 全体描画
 // =====================================================
 void drawUI() {
-  //lcdFill(COLOR_BLACK);
-
-  // 上部テキスト
-  char buf[32];
-
-  sprintf(buf, "Euclid  S:%d H:%d R:%d", steps, hits, rotation);
-  lcdPrint(5, 5, buf, COLOR_WHITE, COLOR_BLACK, 1);
-
-  sprintf(buf, "Prob Step:%d %d%%", selectedStep, prob[selectedStep]);
-  lcdPrint(5, 25, buf, COLOR_WHITE, COLOR_BLACK, 1);
-
-  drawProbabilityBars();
-  drawStepBars();
-  drawStepDots();
+    drawTopText();
+    updateProbabilityBars();
+    updateStepBars();
+    updateStepDots();
+    drawRandomMode();
 }
 
-void drawProbabilityBars() {
-  int x0 = 5;
-  int y0 = 60;
-  int barWidth = 12;
-  int maxHeight = 40;
-  int gap = 3;
+void drawOneProbabilityBar(int i) {
+    int x0 = 5;
+    int y0 = 60;
+    int barWidth = 12;
+    int maxHeight = 40;
+    int gap = 3;
 
-  // 背景を消す
-  lcdFillRect(0, 60, 240, 50, COLOR_BLACK);
-
-  for (int i = 0; i < 16; i++) {
     int x = x0 + i * (barWidth + gap);
     int h = map(prob[i], 0, 100, 0, maxHeight);
 
+    // 背景クリア（このバーの範囲だけ）
+    lcdFillRect(x, y0, barWidth, maxHeight, COLOR_BLACK);
+
+    // バー描画
     lcdFillRect(x, y0 + (maxHeight - h), barWidth, h, COLOR_CYAN);
 
+    // 選択枠
     if (i == selectedStep) {
-      lcdDrawPixel(x - 1, y0 - 1, COLOR_YELLOW);
-      lcdDrawPixel(x + barWidth, y0 - 1, COLOR_YELLOW);
-      lcdDrawPixel(x - 1, y0 + maxHeight, COLOR_YELLOW);
-      lcdDrawPixel(x + barWidth, y0 + maxHeight, COLOR_YELLOW);
+        lcdDrawPixel(x - 1, y0 - 1, COLOR_YELLOW);
+        lcdDrawPixel(x + barWidth, y0 - 1, COLOR_YELLOW);
+        lcdDrawPixel(x - 1, y0 + maxHeight, COLOR_YELLOW);
+        lcdDrawPixel(x + barWidth, y0 + maxHeight, COLOR_YELLOW);
     }
-  }
 }
 
-void drawStepBars() {
-  lcdFillRect(0, 120, 240, 30, COLOR_BLACK);
+void updateProbabilityBars() {
+    static int lastProb[16];
+    static int lastSelected = -1;
 
-  int x0 = 5;
-  int y0 = 120;
-  int barWidth = 12;
-  int barHeight = 20;
-  int gap = 3;
-
-  for (int i = 0; i < 16; i++) {
-    int x = x0 + i * (barWidth + gap);
-
-    uint16_t color =
-      (i == currentStep) ? COLOR_RED :
-      (pattern[i] ? COLOR_WHITE : COLOR_DARK_GRAY);
-
-    lcdFillRect(x, y0, barWidth, barHeight, color);
-  }
+    for (int i = 0; i < 16; i++) {
+        if (prob[i] != lastProb[i] || selectedStep != lastSelected) {
+            drawOneProbabilityBar(i);
+            lastProb[i] = prob[i];
+        }
+    }
+    lastSelected = selectedStep;
 }
 
-void drawStepDots() {
-  lcdFillRect(0, 160, 240, 20, COLOR_BLACK);
+void updateStepBars() {
+    static int lastStep = -1;
 
-  int x0 = 5;
-  int y0 = 160;
-  int gap = 14;
+    // ★ 左端の余白だけ黒で消す（ここがポイント）
+    lcdFillRect(0, 120, 5, 20, COLOR_BLACK);
 
-  for (int i = 0; i < 16; i++) {
-    uint16_t col = (i == currentStep) ? COLOR_RED : COLOR_DARK_GRAY;
-    lcdPrint(x0 + i * gap, y0, (i == currentStep ? "●" : "・"), col, COLOR_BLACK, 1);
-  }
+    if (currentStep != lastStep) {
+        int x0 = 5;
+        int y0 = 120;
+        int barWidth = 12;
+        int barHeight = 20;
+        int gap = 3;
+
+        // 前のステップを描き直す
+        if (lastStep >= 0) {
+            int x = x0 + lastStep * (barWidth + gap);
+            uint16_t color = pattern[lastStep] ? COLOR_WHITE : COLOR_DARK_GRAY;
+            lcdFillRect(x, y0, barWidth, barHeight, color);
+        }
+
+        // 現在のステップを赤で描く
+        int x = x0 + currentStep * (barWidth + gap);
+        lcdFillRect(x, y0, barWidth, barHeight, COLOR_RED);
+
+        lastStep = currentStep;
+    }
 }
 
-void updateProbability() {
+void updateStepDots() {
+    static int lastStep = -1;
 
-  static bool prevLeft=false, prevRight=false, prevUp=false, prevDown=false, prevA=false;
+    if (currentStep != lastStep) {
+        int x0 = 5;
+        int y0 = 160;
+        int gap = 14;
 
-  if (!prevLeft && btnLeft) {
-    selectedStep = (selectedStep + 15) % 16;
-    drawTopText();
-    drawProbabilityBars();
-  }
-  if (!prevRight && btnRight) {
-    selectedStep = (selectedStep + 1) % 16;
-    drawTopText();
-    drawProbabilityBars();
-  }
+        // 前のステップを灰色に戻す
+        if (lastStep >= 0) {
+            lcdPrint(x0 + lastStep * gap, y0, "・", COLOR_DARK_GRAY, COLOR_BLACK, 1);
+        }
 
-  if (!prevUp && btnUp) {
-    prob[selectedStep] = min(100, prob[selectedStep] + 5);
-    drawTopText();
-    drawProbabilityBars();
-  }
-  if (!prevDown && btnDown) {
-    prob[selectedStep] = max(0, prob[selectedStep] - 5);
-    drawTopText();
-    drawProbabilityBars();
-  }
+        // 現在のステップを赤に
+        lcdPrint(x0 + currentStep * gap, y0, "●", COLOR_RED, COLOR_BLACK, 1);
 
-  if (!prevA && btnA) {
-    prob[selectedStep] = (prob[selectedStep] == 0 ? 100 : 0);
-    drawTopText();
-    drawProbabilityBars();
-  }
-
-  prevLeft  = btnLeft;
-  prevRight = btnRight;
-  prevUp    = btnUp;
-  prevDown  = btnDown;
-  prevA     = btnA;
+        lastStep = currentStep;
+    }
 }
 
 // 長押し判定用
@@ -720,13 +705,6 @@ void executeRandom() {
             prob[i] = random(10, 40);   // ★ 休符ステップは低め
         }
     }
-/*
-    drawTopText();
-    drawProbabilityBars();
-    drawStepBars();
-    drawStepDots();
-    drawRandomMode();
-*/
 }
 
 
@@ -745,7 +723,7 @@ const char* getNoteName(uint8_t note) {
 void drawRandomMode() {
     // 画面右上に表示（Key の1行下）
     const int x = 180;   // 右寄せ位置（あなたの画面幅に合わせて調整可）
-    const int y = 12;    // ← Key が y=0 なので、1行下へ
+    const int y = 18;    // ← Key が y=0 なので、1行下へ
 
     // 背景を黒で塗りつぶして上書き（重なり防止）
     lcdFillRect(x, y, 60, 16, COLOR_BLACK);
@@ -830,14 +808,16 @@ void sendNoteOn(uint8_t note, uint8_t velocity) {
   usb_midi.write(msg, 3);
   // ★ Core1 (PRA32-U) へ内部MIDIブリッジ
   midi_bridge_send_note_on(note, velocity);
+  Serial.println("NoteOn sent to Core1");
 }
 
 void sendNoteOff(uint8_t note) {
-  uint8_t msg[3] = {0x80, note, 0};
-  usb_midi.write(msg, 3);
-  // ★ Core1 (PRA32-U) へ内部MIDIブリッジ
-  midi_bridge_send_note_off(note);
+    uint8_t msg[3] = {0x90, note, 0};  // ← これが最強
+    usb_midi.write(msg, 3);
+
+    midi_bridge_send_note_off(note);   // Core1 用
 }
+
 
 const uint8_t scale[] = { 0, 2, 4, 7, 9 };  
 // Cメジャーペンタの度数（0=ルート）
@@ -912,28 +892,120 @@ int baseBPM  = 84;   // 基本 BPM
 int stepBPM  = 84;   // ステップ進行用 BPM
 
 void drawTopText() {
-  char buf[32];
+    static int lastSteps = -1;
+    static int lastHits = -1;
+    static int lastRot = -1;
+    static int lastTranspose = 999;
+    static int lastNote = -1;
+    static int lastProbStep = -1;
+    static int lastProbVal = -1;
 
-  // 背景クリア
-  lcdFillRect(0, 0, 240, 40, COLOR_BLACK);
+    char buf[32];
 
-  // Euclid 情報
-  sprintf(buf, "Euclid  S:%d H:%d R:%d", steps, hits, rotation);
-  lcdPrint(5, 5, buf, COLOR_WHITE, COLOR_BLACK, 1);
+    // --- Euclid 情報 ---
+    if (steps != lastSteps || hits != lastHits || rotation != lastRot) {
+        // 前の文字を黒で上書き
+        lcdFillRect(0, 0, 240, 15, COLOR_BLACK);
 
-  // Key 表示
-  char tbuf[16];
-  sprintf(tbuf, "Key:%+d", transpose);
-  lcdPrint(130, 5, tbuf, COLOR_YELLOW, COLOR_BLACK, 1);
+        sprintf(buf, "Euclid  S:%d H:%d R:%d", steps, hits, rotation);
+        lcdPrint(5, 5, buf, COLOR_WHITE, COLOR_BLACK, 1);
 
-  // ★ 音名表示（右端）
-  char nbuf[16];
-  sprintf(nbuf, "Note:%s", getNoteName(lastNoteA));
-  lcdPrint(180, 5, nbuf, COLOR_CYAN, COLOR_BLACK, 1);
+        lastSteps = steps;
+        lastHits = hits;
+        lastRot = rotation;
+    }
 
-  // Probability 情報
-  sprintf(buf, "Prob Step:%d %d%%", selectedStep, prob[selectedStep]);
-  lcdPrint(5, 25, buf, COLOR_WHITE, COLOR_BLACK, 1);
+    // --- Key 表示 ---
+    if (transpose != lastTranspose) {
+        lcdFillRect(130, 0, 50, 15, COLOR_BLACK);
+
+        sprintf(buf, "Key:%+d", transpose);
+        lcdPrint(130, 5, buf, COLOR_YELLOW, COLOR_BLACK, 1);
+
+        lastTranspose = transpose;
+    }
+
+    // --- Note 表示 ---
+    if (lastNoteA != lastNote) {
+        lcdFillRect(180, 0, 60, 15, COLOR_BLACK);
+
+        sprintf(buf, "Note:%s", getNoteName(lastNoteA));
+        lcdPrint(180, 5, buf, COLOR_CYAN, COLOR_BLACK, 1);
+
+        lastNote = lastNoteA;
+    }
+
+    // --- Probability 情報 ---
+    if (selectedStep != lastProbStep || prob[selectedStep] != lastProbVal) {
+        lcdFillRect(0, 20, 240, 20, COLOR_BLACK);
+
+        sprintf(buf, "Prob Step:%d %d%%", selectedStep, prob[selectedStep]);
+        lcdPrint(5, 25, buf, COLOR_WHITE, COLOR_BLACK, 1);
+
+        lastProbStep = selectedStep;
+        lastProbVal = prob[selectedStep];
+    }
+
+    // --- BPM 表示 ---
+    static int lastBPM = -1;
+    if (stepBPM != lastBPM) {
+         lcdFillRect(130, 20, 60, 20, COLOR_BLACK);  // BPM 表示エリアだけ消す
+
+         sprintf(buf, "BPM:%d", stepBPM);
+         lcdPrint(130, 25, buf, COLOR_GREEN, COLOR_BLACK, 1);
+
+         lastBPM = stepBPM;
+    }
+}
+
+void updateProbability() {
+  static bool prevLeft  = false;
+  static bool prevRight = false;
+  static bool prevUp    = false;
+  static bool prevDown  = false;
+  static bool prevA     = false;
+
+  // --- 左 ---
+  if (!prevLeft && btnLeft) {
+    selectedStep = (selectedStep + 15) % 16;   // 左へ
+    drawTopText();                             // 差分描画
+    updateProbabilityBars();                   // 差分描画
+  }
+
+  // --- 右 ---
+  if (!prevRight && btnRight) {
+    selectedStep = (selectedStep + 1) % 16;    // 右へ
+    drawTopText();
+    updateProbabilityBars();
+  }
+
+  // --- 上（+5%） ---
+  if (!prevUp && btnUp) {
+    prob[selectedStep] = min(100, prob[selectedStep] + 5);
+    drawTopText();
+    updateProbabilityBars();
+  }
+
+  // --- 下（-5%） ---
+  if (!prevDown && btnDown) {
+    prob[selectedStep] = max(0, prob[selectedStep] - 5);
+    drawTopText();
+    updateProbabilityBars();
+  }
+
+  // --- Aボタン（0 ↔ 100 トグル） ---
+  if (!prevA && btnA) {
+    prob[selectedStep] = (prob[selectedStep] == 0 ? 100 : 0);
+    drawTopText();
+    updateProbabilityBars();
+  }
+
+  // --- ボタン状態更新 ---
+  prevLeft  = btnLeft;
+  prevRight = btnRight;
+  prevUp    = btnUp;
+  prevDown  = btnDown;
+  prevA     = btnA;
 }
 
 int generateArpInterval(bool goingUp) {
@@ -1155,6 +1227,10 @@ uint8_t generateNoteA(bool &trillFlagOut, int &degreeOut) {
         trillFlagOut = (random(0, 100) < 15);
 
         uint8_t note = 50 + inScale[degree] + transpose;
+        
+        // ★ ここで C1〜C5 にクランプ
+        note = constrain(note, 24, 72);
+        
         lastNoteA = note;
         degreeOut = degree;
         return note;
@@ -1186,6 +1262,10 @@ if (phraseDir == -1) {
 
     // ★ ここで1回だけ note を返す（2連打完全防止）
     uint8_t note = 50 + inScale[degree] + transpose;
+
+    // ★ ここで C1〜C5 にクランプ
+    note = constrain(note, 24, 72);
+    
     lastNoteA = note;
     degreeOut = degree;
     return note;
@@ -1412,14 +1492,14 @@ void handleCC(byte cc, byte value) {
     // ============================
     if (cc == 44 && value > 0) {  // REW
         currentStep = (currentStep + 15) % 16;
-        drawStepBars();
-        drawStepDots();
+        updateStepBars();
+        updateStepDots();
     }
 
     if (cc == 45 && value > 0) {  // FF
         currentStep = (currentStep + 1) % 16;
-        drawStepBars();
-        drawStepDots();
+        updateStepBars();
+        updateStepDots();
     }
 
     // ============================
@@ -1506,39 +1586,39 @@ unsigned long silenceLength = 0;
 void setup() {
   Serial.begin(115200);
   delay(200);
- 
+  Serial.println("Core0: setup start");
+
   usb_midi.begin();  
+
+  lcdInit();
   
-  //lcdInit();
-  
-  //lcdFill(COLOR_BLACK);
+  lcdFill(COLOR_BLACK);
 
   for (int i = 0; i < 16; i++) prob[i] = 100;
 
-  //drawUI();
-
   executeRandom();
-  nextArpEventTime = millis() + random(10000, 20000);  // 10〜20秒
+  nextArpEventTime = millis() + random(10000, 20000);
   transpose += 5;
-  baseBPM = max(20, baseBPM - 4);   // ★ 基準テンポを4下げる
+  baseBPM = max(20, baseBPM - 4);
 
-  // ★ 起動直後にアルペジオを強制スタート
-  lastNoteA = 52 + transpose;   // E3 を基準に（あなたの希望）
+  lastNoteA = 52 + transpose;
 
-  // ★ 起動時アルペジオを長くする
   arpEventActive = true;
   arpEventCount = 0;
   arpRepeatCount = 0;
-
-  // ★ 起動時だけ長く（10〜20回の往復）
   arpRepeatTarget = random(10, 21);
-
-  // ★ 1方向の音数も増やすための初期化
   arpGoingUp = (rand() % 100 < 60);
-
-  // ★ すぐに開始
   nextArpStepTime = millis();
+  lastArpActivity = millis();
+  nextSilenceTime = millis() + 3000;
+  
+  // ★★★ Core0 の初期化が全部終わってから Core1 を起動する ★★★
+  multicore_launch_core1(core1_main);
+
+  Serial.println("Core0: setup done, Core1 launched");
 }
+
+
 
 int phraseDir = 1;   // +1 = 上行, -1 = 下降
 
@@ -1615,30 +1695,50 @@ void sendAllNotesOff() {
 }
 
 void loop() {
-
     unsigned long now = millis();
+    unsigned long nst = nextSilenceTime;
 
+    // =====================================================
+    // 0. NoteOff 安全装置
+    // =====================================================
+    auto safeNoteOffA = [&]() {
+        if (noteIsOnA) {
+            sendNoteOff(lastNoteA);
+            noteIsOnA = false;
+        }
+    };
+
+    // =====================================================
+    // 1. 無音フェーズ
+    // =====================================================
 #if !DISABLE_SILENCE
     static bool silenceActive = false;
     static unsigned long silenceEndTime = 0;
-    static unsigned long nextSilenceTime = millis() + random(25000, 30000);
-#endif
 
-#if !DISABLE_SILENCE
-    // ★ 20秒安全装置：無音中は動かない、アルペジオが20秒鳴いていない時だけ
-    if (!silenceActive && !arpEventActive && (now - lastArpActivity > 20000)) {
+    if (!silenceActive && now >= nst) {
+        silenceActive = true;
 
-        // 無音も一旦キャンセル
+        silenceLength  = 1800 + random(0, 2200);
+        silenceEndTime = now + silenceLength;
+
+        nextSilenceTime = now + random(5000, 8000);
+
+        sendAllNotesOff();
+        safeNoteOffA();
+        if (trillNoteOn) { sendNoteOff(trillLastNote); trillNoteOn = false; }
+        if (noteIsOnB)   { sendNoteOff(lastNoteB);     noteIsOnB = false; }
+
+        lastArpActivity = now;
+        return;
+    }
+
+    if (silenceActive && (now - lastArpActivity > 20000)) {
         silenceActive   = false;
         silenceEndTime  = 0;
-
-        // ★ 次の無音は必ず30秒以上未来に飛ばす（最重要）
         nextSilenceTime = now + 30000;
 
-        // ★ キーもリセット（または上方向に寄せる）
-        transpose = 3;   // もしくは +12 など
-    
-        // アルペジオ完全リセット
+        transpose = 3;
+
         arpEventActive  = true;
         arpEventCount   = 0;
         arpRepeatCount  = 0;
@@ -1648,41 +1748,11 @@ void loop() {
 
         nextArpStepTime  = now;
         nextArpEventTime = now + random(5000, 15000);
-        lastArpActivity = now;
+        lastArpActivity  = now;
     }
-#endif
-    
-    readButtons();
-    readJoystick();
 
-#if !DISABLE_SILENCE
-    // ★ 無音処理（ミュート専用、安全版）
-    if (!silenceActive && now >= nextSilenceTime) {
-
-        silenceActive = true;
-
-        // 無音の長さ（1.8〜4.0秒）
-        silenceLength  = 1800 + random(0, 2200);
-        silenceEndTime = now + silenceLength;
-
-        // 次の無音タイミング（25〜30秒）
-        nextSilenceTime = now + random(25000, 30000);
-
-        // ★ 音だけ止める（アルペジオ状態には触らない）
-        sendAllNotesOff();
-        if (noteIsOnA) { sendNoteOff(lastNoteA); noteIsOnA = false; }
-        if (trillNoteOn) { sendNoteOff(trillLastNote); trillNoteOn = false; }
-        if (noteIsOnB) { sendNoteOff(lastNoteB); noteIsOnB = false; }
-        lastArpActivity = now;
-        return;  // 無音開始直後はここで終了
-    }
-#endif
-#if !DISABLE_SILENCE
     if (silenceActive) {
-
         if (now >= silenceEndTime) {
-
-            // ★ 無音終了：キー変更だけ行う（アルペジオには触らない）
             float factor = (float)(silenceLength - 1800) / (4000 - 1800);
             int upBias = 60 + (int)(factor * 30);
 
@@ -1696,148 +1766,138 @@ void loop() {
             drawTopText();
 
             silenceActive = false;
-            lastArpActivity = now;   // ★ 追加
-            
-            return;  // 無音終了直後もここで抜ける
-
-        } else {
-            // ★ 無音中は return しない！
-            // 音を出さないだけで、アルペジオの状態は進める
-            // つまりここは何もせず下へ流す
+            lastArpActivity = now;
+            lastMainStepTime = now;
+            return;
         }
     }
 #endif
 
-    // ★ 呼吸する BPM（sin 波で ±5 揺らす）
+    // =====================================================
+    // 2. 入力
+    // =====================================================
+    readButtons();
+    readJoystick();
+
+    // =====================================================
+    // 3. 呼吸 BPM
+    // =====================================================
     static unsigned long breathStart = millis();
-    static unsigned long breathDuration = 8000 + random(0, 7000);  // 8〜15秒で1呼吸
+    static unsigned long breathDuration = 8000 + random(0, 7000);
 
-    float t = (float)(now - breathStart) / (float)breathDuration;  // 0.0〜1.0
-
+    float t = (float)(now - breathStart) / (float)breathDuration;
     if (t >= 1.0f) {
         breathStart = now;
         breathDuration = 8000 + random(0, 7000);
         t = 0.0f;
     }
 
-    // ★ sin 波（吸う→吐く）
-    float wave = sin(t * 3.14159265f * 2.0f);  // -1〜+1
-
-    // ★ ±5 BPM の揺らぎ
+    float wave = sin(t * 3.14159265f * 2.0f);
     int delta = (int)(wave * 5.0f);
 
-    // ★ 呼吸 BPM
     stepBPM = baseBPM + delta;
-    if (stepBPM < 30) stepBPM = 30;
+    if (stepBPM < 30) stepBPM = 30;   // ★ 安全処理
 
-    // ★ 自動トランスポーズ（4度 = 5半音）をランダムで発生
+    // =====================================================
+    // 4. 自動トランスポーズ
+    // =====================================================
     static unsigned long nextTransposeTime = millis() + random(5000, 15000);
-
     if (now >= nextTransposeTime) {
-
-        // +5 または -5 をランダムに選ぶ
-        int delta = (rand() % 2 == 0) ? +5 : -5;
-
-        transpose += delta;
-
-        // 安全範囲に制限
+        int d = (rand() % 2 == 0) ? +5 : -5;
+        transpose += d;
         if (transpose > 24) transpose = 24;
         if (transpose < -24) transpose = -24;
 
-        // 次の発生タイミング（5〜15秒）
         nextTransposeTime = now + random(5000, 15000);
-
-        // UI更新
         drawTopText();
     }
 
-    // ★ BPM を ±2 揺らす（ゆっくり呼吸するように）
+    // =====================================================
+    // 5. BPM 微揺れ
+    // =====================================================
     static unsigned long lastBpmChange = 0;
-    if (now - lastBpmChange > 500) {  // 0.5秒ごとにゆっくり揺らす
+    if (now - lastBpmChange > 500) {
         lastBpmChange = now;
-
-        int delta = random(-2, 3);  // -3〜+3
-        stepBPM = baseBPM + delta;
-
-        // 下限を安全に確保
-        if (stepBPM < 30) stepBPM = 30;
+        int d = random(-2, 3);
+        stepBPM = baseBPM + d;
+        if (stepBPM < 30) stepBPM = 30;   // ★ 安全処理
     }
 
     // =====================================================
-    // ★ 5〜15秒ランダムでアルペジオイベント（2〜4回の上下）
+    // 6. アルペジオイベント開始
     // =====================================================
+    if (!arpEventActive) {
+        unsigned long stepInterval = 60000UL / max(stepBPM, 30) / 4;  // ★ 安全
+        bool inThisStep = (now - lastMainStepTime) < stepInterval;
 
-    // ---- イベント開始 ----
-    if (!arpEventActive && now >= nextArpEventTime) {
-        /*
-        arpEventActive = true;
+        if (inThisStep) {
+            if (lastNoteA < 36 || lastNoteA > 90)
+                lastNoteA = 52 + transpose;
 
-        arpEventCount = 0;
-        arpRepeatCount = 0;
+            if (nextArpEventTime > now + 20000)
+                nextArpEventTime = now + 10;
 
-        arpRepeatTarget = random(4, 7);   // ★ 2〜4回の往復
-        arpGoingUp = (rand() % 100 < 60); // 最初は上昇60%
+            if (now >= nextArpEventTime) {
+                arpEventActive  = true;
+                arpEventCount   = 0;
+                arpRepeatCount  = 0;
+                arpRepeatTarget = random(4, 7);
+                arpGoingUp      = (rand() % 100 < 60);
+                arpFlipWidth    = random(2, 5);
 
-        // ★ 反転幅をイベント開始時に決める（安定化の核心）
-        arpFlipWidth = random(2, 5);      // 2〜4音で反転
-
-        nextArpStepTime = now;
-
-        // ★ 開始時点で活動扱いにする
-        lastArpActivity = now;
-        */
-        arpEventActive  = true;
-        arpEventCount   = 0;
-        arpRepeatCount  = 0;
-        arpRepeatTarget = random(4, 7);
-        arpGoingUp      = (rand() % 100 < 60);
-        arpFlipWidth    = random(2, 5);
-        nextArpStepTime = now;
-        lastArpActivity = now;
+                nextArpStepTime = now + 10;
+                lastArpActivity = now;
+            }
+        }
     }
 
-
-    // ---- イベント中（32分アルペジオ）----
+    // =====================================================
+    // 7. アルペジオ中
+    // =====================================================
     if (arpEventActive) {
+        unsigned long interval    = 60000UL / max(stepBPM, 30) / 4;  // ★ 安全
+        unsigned long arpInterval = interval / 4;
 
-        unsigned long interval = 60000UL / stepBPM / 4;  // 8分
-        unsigned long arpInterval = interval / 4;        // ★ 32分音符
+        if (nextArpStepTime > now + 2000)
+            nextArpStepTime = now + 10;
+
+        if (arpEventCount > 20) {
+            arpEventCount = 0;
+            arpGoingUp = !arpGoingUp;
+            arpRepeatCount++;
+        }
 
         if (now >= nextArpStepTime) {
 
-            // ★ 上昇 or 下降の1音
+            safeNoteOffA();
+
             uint8_t note = generateArpStep(lastNoteA, arpGoingUp);
             sendNoteOn(note, 90);
+
             lastNoteA = note;
+            noteIsOnA = true;
 
             lastArpActivity = now;
-
             nextArpStepTime = now + arpInterval;
             arpEventCount++;
 
-            // ★ 反転幅は固定（イベント開始時に決めた値）
             if (arpEventCount >= arpFlipWidth) {
                 arpEventCount = 0;
-                arpGoingUp = !arpGoingUp;   // ★ 方向反転
+                arpGoingUp = !arpGoingUp;
                 arpRepeatCount++;
 
-                // ★ 2〜4回の往復が終わったら終了
                 if (arpRepeatCount >= arpRepeatTarget) {
                     arpEventActive = false;
-
-                    // ★ 無音中でも確実に未来に飛ばす
-                    unsigned long base = millis();  
+                    unsigned long base = millis();
                     nextArpEventTime = base + random(3000, 8000);
-
-                    // ★ 安全のため活動扱いにする
-                    lastArpActivity = base;
+                    lastArpActivity  = base;
                 }
             }
         }
     }
 
     // =====================================================
-    // ★ モード切替（10〜20秒）
+    // 8. モード切替
     // =====================================================
     static unsigned long lastModeChange = 0;
     static unsigned long modeInterval = 10000 + random(0, 10000);
@@ -1845,55 +1905,56 @@ void loop() {
     if (now - lastModeChange >= modeInterval) {
         lastModeChange = now;
         modeInterval = 10000 + random(0, 10000);
-
         randomMode = (randomMode + 1) % 3;
         currentStep = -1;
         executeRandom();
     }
 
     // =====================================================
-    // ★ メインステップ（8分）
+    // 9. メインステップ（8分）
     // =====================================================
     static unsigned long lastStep = 0;
-    unsigned long interval = 60000UL / stepBPM / 4;
+    unsigned long interval = 60000UL / max(stepBPM, 30) / 4;   // ★ 完全安全版
 
     if (now - lastStep >= interval) {
         lastStep = now;
 
-        if (!isPlaying) {
-            if (noteIsOnA) { sendNoteOff(lastNoteA); noteIsOnA = false; }
-            return;
-        }
-
         currentStep = (currentStep + 1) % steps;
-        drawStepBars();
-        drawStepDots();
+        lastMainStepTime = now;
 
         if (noteIsOnA && now >= noteOffTimeA) {
-            sendNoteOff(lastNoteA);
-            noteIsOnA = false;
+            safeNoteOffA();
         }
 
-        // ---- メインノート ----
-        bool fire = true;
-
-        if (fire && !arpEventActive) {  
-            // ★ アルペジオ中はメインノートを鳴らさない（自然な間）
+        if (!arpEventActive) {
             bool trillFlag = false;
             int dummyDegree = 0;
 
-            uint8_t noteA = generateNoteA(trillFlag, dummyDegree);
+            safeNoteOffA();
 
+            uint8_t noteA = generateNoteA(trillFlag, dummyDegree);
             int velA = 90 + random(-20, 20);
+
             sendNoteOn(noteA, velA);
+            lastNoteA = noteA;
             noteIsOnA = true;
+
             noteOffTimeA = now + (interval / 4);
 
-            //lastNoteA = noteA;
-            
             pushNoteDot(noteA);
             drawNoteDots();
             drawTopText();
         }
     }
+
+    // =====================================================
+    // 10. UI（必要なら）
+    // =====================================================
+    static uint32_t lastUI = 0;
+    uint32_t uiNow = millis();
+
+     if (uiNow - lastUI >= 16) {
+         drawUI();
+         lastUI = uiNow;
+     }
 }
