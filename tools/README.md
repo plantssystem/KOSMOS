@@ -26,9 +26,17 @@ This adds an additional layer of musical “variation” and “controlled rando
 
 ---
 
+## Screenshot
+
+![KOSMOS MIDI Randomizer](../docs/screenshots/KOSMOSMidiRandomizer.png)
+
+---
+
 ## 🎥 About the Demo Video
 
 The video demonstrates:
+
+[![KOSMOS MIDI Randomizer Demo](https://img.youtube.com/vi/RE0mhJEghZc/0.jpg)](https://www.youtube.com/watch?v=RE0mhJEghZc)
 
 - MIDI input from KOSMOS  
 - Switching between different scales  
