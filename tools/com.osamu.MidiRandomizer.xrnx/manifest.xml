@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<RenoiseScriptingTool doc_version="0">
+  
+  <ApiVersion>6</ApiVersion>
+  <Id>com.osamu.MidiRandomizer</Id>
+  <Version>1.0</Version>
+  <Author>osamu</Author>
+  <Name>KOSMOS MIDI Randomizer</Name>
+  <Category>MIDI,Tools</Category>
+  <Description>Randomizes incoming MIDI notes in real-time.</Description>
+
+  <MenuEntries>
+    <MenuEntry name="Main Menu:Tools>KOSMOS MIDI Randomizer">
+      main.lua
+    </MenuEntry>
+  </MenuEntries>
+
+</RenoiseScriptingTool>
