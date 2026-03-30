@@ -79,7 +79,7 @@ Grab the latest UF2 from the **Releases** page:
 3. Copy the UF2 file to the mounted drive  
 
 ### 3. Connect Hardware
-- RP2040 board (Pico or Waveshare PicoAudio)  
+- RP2040 board 
 - PCM5102 DAC (if not using PicoAudio)  
 - MIDI OUT or USB‑MIDI to your DAW/synth  
 
