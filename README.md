@@ -1,330 +1,123 @@
-# KOSMOS v1.2.0
+# KOSMOS  
+A generative MIDI sequencer for RP2040  
+Version **v1.2.1**
 
-KOSMOS is a **compact Generative MIDI Sequencer** project based on the Raspberry Pi Pico / RP2040.  
-In v1.2.0, while building on the existing core functionality, we significantly enhance the **user interface and audio output**, aiming to bring the hardware one step closer to a more complete and refined form.
+KOSMOS is a standalone generative MIDI sequencer built on the RP2040.  
+It blends Euclidean rhythms, step sequencing, and expressive parameter mapping into a compact, minimal, and musical device.
 
-<img src="docs/screenshots/KOSMOS_02.JPG" width="400">
+KOSMOS includes a built‑in **multi‑timbral digital synth engine based on ISGK Instruments' PRA32‑U**, running on Core1.  
+This allows KOSMOS to function not only as a sequencer but also as a self‑contained sound module when desired.
 
-## Demo Video
-
-[![KOSMOS v1.2.0 Demo](https://img.youtube.com/vi/3NyKyGo-T-A/0.jpg)](https://www.youtube.com/shorts/3NyKyGo-T-A)
-
-## Key Enhancements in v1.2.0
-
-###  Official Introduction of an LCD-Based User Interface
-
-In v1.2.0, an LCD-centered user interface has been fully implemented.
-
-- Step states and parameters can be **visually monitored at a glance**
-- A layout designed for intuitive operation during live performance
-- Careful tuning of displayed content and refresh timing to ensure clarity even on a small screen
-
-Rather than being a simple debugging display,  
-the UI is designed with the goal of becoming  
-**“an interface you can physically play as an instrument.”**
+This version **v1.2.1** focuses on refining the sequencer engine for more stable, expressive, and predictable generative behavior.
 
 ---
 
-###  Audio Output via PCM5102 (I2S DAC)
+## 🎬 Demo Video
 
-In addition to traditional MIDI output,  
-v1.2.0 introduces **audio output using a PCM5102 I2S DAC**.
-
-- Stable audio output utilizing the RP2040’s I2S capabilities
-- A simple analog circuit design to minimize noise
-- Practical sound quality achieved within a compact, low-power configuration
-
-With this addition, KOSMOS moves beyond being just a MIDI generator,  
-bringing it closer to a **standalone sequencer capable of producing sound on its own**.
+[![KOSMOS Demo (YouTube Shorts)](https://img.youtube.com/vi/pYgWGcJLjj8/0.jpg)](https://youtube.com/shorts/pYgWGcJLjj8)
 
 ---
 
-## Design and Fine-Tuning Toward a “Finished Form”
+## 🌌 Features
 
-In v1.2.0, the focus is not only on adding new features, but on refining the overall balance of the system.
+### 🎛 Generative Sequencer
+- Hybrid engine combining **Euclidean**, **Step**, and **Both** modes  
+- Scale‑aware arpeggio generation  
+- Scene‑based transitions with speed, width, density, direction, and duration mapping  
+- Improved timing stability and event scheduling (v1.2.1)
 
-- Re-evaluating the role allocation between Core0 and Core1
-- Timing adjustments to prevent interference between LCD rendering and audio processing
-- Structural cleanup with future expansion in mind (alternative DACs, external modules)
+### 🎹 Built‑in Digital Synth Engine (PRA32‑U Multi‑Timbral)
+- Powered by **ISGK Instruments PRA32‑U**  
+- Multi‑timbral digital synthesis  
+- Runs on RP2040 Core1 for stable audio performance  
+- Supports CC‑based parameter control  
+- Clean, low‑noise output via PCM5102 DAC or Waveshare PicoAudio
 
-Rather than simply increasing functionality, the highest priorities are:
+### 🖥 LCD User Interface (240×240)
+- Real‑time step bar visualization  
+- Parameter display with live updates  
+- Mode indicators (E / S / B)  
+- Smooth rendering on Core0 for stable UI performance  
 
-- **Stability over long periods of operation**
-- **A natural, comfortable feel when interacting with the physical device**
-
-Careful and deliberate tuning continues throughout the system.
-
----
-
-## Positioning of v1.2.0
-
-KOSMOS v1.2.0 is not the final version, but with the combination of:
-
-- User Interface
-- Audio Output
-- Hardware Integration
-
-it represents a key transition pointfrom a  
-**“concept prototype” to a “practical musical instrument.”**
-
-Through continued testing and refinement on real hardware,  
-KOSMOS will keep evolving into a generative sequencer that is genuinely enjoyable to pick up and play.
+### 🔌 Connectivity
+- Standard MIDI OUT  
+- USB‑MIDI support  
+- Runs on RP2040 (Raspberry Pi Pico / Waveshare PicoAudio recommended)
 
 ---
 
-## Development Status
+## 🆕 What’s New in v1.2.1
 
-- Target MCU: RP2040 (Raspberry Pi Pico compatible)
-- LCD: SPI-connected display
-- Audio DAC: PCM5102 (I2S)
-- Development Environment: Arduino / C++
+### 🔧 Sequencer Engine Improvements
+- Refined event scheduling for tighter rhythmic accuracy  
+- Improved step/Euclid hybrid behavior in **Both** mode  
+- Reduced micro‑timing drift during long generative sessions  
+- More predictable arpeggio width & direction transitions  
+- Enhanced internal state recovery after rapid parameter changes  
 
-Detailed wiring examples and sketch structure will be added to the repository progressively.
-```
+### 🖥 UI Enhancements
+- Step bar update timing improved for smoother animation  
+- Reduced flicker and unnecessary redraws  
+- More responsive parameter display
 
-***
+### 🎼 Musicality Improvements
+- Better distribution of notes in high‑density Euclid patterns  
+- More natural phrasing when switching scales or scenes  
+- Improved consistency between visual steps and generated events
 
-# System Overview (Role Separation)
+---
 
-| Subsystem  | Description        |
-| ---------- | ------------------ |
-| Display    | Waveshare SPI LCD  |
-| Audio      | PCM5102 (I2S DAC)  |
-| Processing | Pico Core0 / Core1 |
-| Power      | Supplied from Pico |
+## 📦 Installation
 
-**Design Policy:**
+### 1. Download the Firmware
+Grab the latest UF2 from the **Releases** page:  
+`KOSMOS_v1.2.1.uf2`
 
-*   **LCD uses fixed SPI**
-*   **Audio is fully separated via I2S**
-*   **Leave GPIOs available for future expansion**
+### 2. Flash to RP2040
+1. Hold **BOOTSEL** on your RP2040  
+2. Connect via USB  
+3. Copy the UF2 file to the mounted drive  
 
-***
+### 3. Connect Hardware
+- RP2040 board (Pico or Waveshare PicoAudio)  
+- PCM5102 DAC (if not using PicoAudio)  
+- MIDI OUT or USB‑MIDI to your DAW/synth  
 
-# Recommended GPIO Assignment (Final)
+---
 
-## Waveshare LCD (SPI)
+## 🎹 Usage
 
-| LCD Signal | Pico GPIO  | Notes                   |
-| ---------- | ---------- | ----------------------- |
-| SCK        | **GPIO18** | SPI0 SCK                |
-| MOSI       | **GPIO19** | SPI0 TX                 |
-| CS         | **GPIO17** | Arbitrary               |
-| DC         | **GPIO16** | Data / Command          |
-| RST        | **GPIO20** | Reset                   |
-| BL         | **GPIO21** | Backlight (PWM capable) |
-| VCC        | 3.3V       |                         |
-| GND        | GND        |                         |
+### Modes
+- **E** – Euclidean rhythm generator  
+- **S** – Step sequencer  
+- **B** – Hybrid mode (Euclid × Step)
 
-**Official Waveshare configuration, verified stable on real hardware**
+### Parameters
+- **Speed** – Arpeggio rate  
+- **Width** – Interval spread  
+- **Density** – Event probability / Euclid fill  
+- **Direction** – Up / Down / Ping‑pong / Random  
+- **Duration** – Note length  
 
-***
+All parameters update in real time and are reflected on the LCD.
 
-## PCM5102 (I2S DAC)
+---
 
-### Complete Noninterference with LCD, USB, and Expanders
+## 🛠 Hardware
 
-| PCM5102 Signal | Pico GPIO  | Notes            |
-| -------------- | ---------- | ---------------- |
-| BCK            | **GPIO2**  | I2S Bit Clock    |
-| LRCK           | **GPIO3**  | I2S Word Select  |
-| DIN            | **GPIO4**  | I2S Data         |
-| VCC            | 5V or 3.3V | Module dependent |
-| GND            | GND        |                  |
+### Recommended
+- PCM5102  
+- 240×240 SPI LCD (ST7789)  
+- RP2040 (Raspberry Pi Pico)
 
-**GPIO24 do not conflict with LCD or USB**
+## 📄 License
+KOSMOS is released under the **MIT License**.  
+The built‑in sound engine is based on **PRA32‑U (CC0 License)** by ISGK Instruments.
 
-***
+---
 
-## Power Wiring (Important)
+## 🌠 Special Thanks
+**Powered by ISGK Instruments PRA32‑U**  
 
-    Pico 5V (VSYS) ── PCM5102 VCC
-    Pico GND       ── PCM5102 GND
-
-*   Low noise, reduced audio distortion
-*   Modules supporting 3.3V operation may use **3V3**
-
-***
-
-# Physical Wiring Diagram (ASCII)
-
-    ┌────────────────┐
-    │ Raspberry Pi   │
-    │ Pico           │
-    │                │
-    │ GPIO18 ────┐   │  SPI SCK → LCD
-    │ GPIO19 ────┼───┘  SPI MOSI → LCD
-    │ GPIO17 ────┘       CS → LCD
-    │ GPIO16 ────────── DC → LCD
-    │ GPIO20 ────────── RST → LCD
-    │ GPIO21 ────────── BL → LCD
-    │                │
-    │ GPIO2  ───────── BCK → PCM5102
-    │ GPIO3  ───────── LRCK → PCM5102
-    │ GPIO4  ───────── DIN → PCM5102
-    │                │
-    │ 5V (VSYS) ────── VCC → PCM5102
-    │ GND       ────── GND → PCM5102
-    └────────────────┘
-
-***
-
-# Why This Layout Is Optimal
-
-### Zero Pin Conflicts
-
-*   LCD: GPIO1621
-*   Audio: GPIO24  
-    → **Completely independent**
-
-### Easy Core Separation
-
-*   Core1 → Audio (I2S)
-*   Core0 → LCD / UI / MIDI
-
-### Easy Expansion
-
-*   GPIO615 fully available
-*   Room for Omnibus Expander, clock input, LEDs, etc.
-
-***
-
-# Notes (Mandatory Checks)
-
-### PCM5102 MUTE / FLT Pins
-
-*   Most modules work **with pins left unconnected**
-*   If no audio output is observed:
-
-
-    MUTE → GND
-
-### Wiring Length
-
-*   Keep **BCK / LRCK / DIN as short as possible**
-*   Jumper wires: **510 cm maximum recommended**
-***
- ```
-
-## 1) Generative Sequencer Dataflow 
-```mermaid
-graph LR
-  %% Layout
-  %% Core concept: clock/transport -> rule/probability engines -> event scheduler -> output
-
-  subgraph Inputs[Inputs & Modulation]
-    CLK["Clock<br/>(Internal / MIDI)"]
-    UI["UI Controls<br/>(Encoders/Buttons/LCD)"]
-    LFO[LFO / Random Walk]
-    EXT["MIDI In (optional)"]
-  end
-
-  subgraph Theory[Musical Context]
-    KEY[Key / Scale]
-    HARM["Chord / Mode (optional)"]
-  end
-
-  subgraph Engines[Generative Engines]
-    RYTHM["Rhythm Engine<br/>(Euclidean / Pattern / Density)"]
-    PROB["Probability Rules<br/>(Note On, Tie, Ratchet, Skip)"]
-    PITCH["Pitch Engine<br/>(Scale-Quantized, Intervals)"]
-    VEL[Velocity / Accent Model]
-    HUMA["Humanize<br/>(Microtiming / Swing)"]
-    MUT["Mutation<br/>(Seeded, Step-wise / Bar-wise)"]
-  end
-
-  subgraph Sched[Scheduler]
-    QUEUE["Event Queue<br/>(Ring Buffer)"]
-    SCHED["Tick Scheduler<br/>(PPQN / DMA friendly)"]
-  end
-
-  subgraph Outputs[Outputs]
-    MIDI["MIDI Out<br/>(USB / DIN)"]
-    AUDIO["I2S Audio (PCM5102)<br/>(optional)"]
-  end
-
-  %% Wiring
-  CLK --> SCHED
-  UI --> Engines
-  UI --> Theory
-  LFO --> Engines
-  EXT -->|Clock/Notes/CC| Engines
-
-  Theory --> PITCH
-  RYTHM --> PROB
-  PROB --> PITCH
-  PITCH --> VEL
-  VEL --> HUMA
-  MUT -.-> Engines
-
-  %% Event emission into queue
-  RYTHM --> QUEUE
-  PROB --> QUEUE
-  PITCH --> QUEUE
-  VEL --> QUEUE
-  HUMA --> QUEUE
-
-  SCHED --> QUEUE
-  QUEUE --> MIDI
-  QUEUE --> AUDIO
-  ```
-## 2)  Timing & Scheduling (Core collaboration and queues) 
-```mermaid
-sequenceDiagram
-  participant CLK as Clock (Internal/MIDI)
-  participant SEQ as Sequencer Engine (Core0)
-  participant Q as Event Queue (Ring Buffer)
-  participant OUT as Output Driver
-  participant C1 as Core1 (Audio/I2S, optional)
-
-  Note over SEQ: Initialize seed, scale, rules, buffers
-  CLK->>SEQ: tick (PPQN)
-  SEQ->>SEQ: step evaluation (rhythm / prob / pitch / vel / humanize)
-  SEQ->>Q: enqueue NoteOn/NoteOff with timestamps
-  loop until queue empty or deadline
-    OUT->>Q: pop due events
-    Q-->>OUT: event (timed)
-    alt MIDI build
-      OUT->>OUT: send USB/DIN MIDI
-    else Audio build
-      OUT->>C1: push audio note/gate to I2S render
-    end
-  end  
-  ```
-  ## 3)  Minimal README diagram (compact)
-```mermaid
-flowchart LR
-  CLK[Clock/Transport] --> SCHED["Scheduler (PPQN)"]
-  UI[UI/LFO/MIDI In] --> ENG["Generative Engines<br/>(Rhythm/Prob/Pitch/Vel/Humanize)"]
-  ENG --> QUEUE[Event Queue]
-  SCHED --> QUEUE
-  QUEUE --> MIDI[MIDI Out]
-  QUEUE --> AUDIO["I2S (PCM5102)"]
-```
- ## 4)  Optional: Parameter Mod Matrix (if you want to show live modulation)
-```mermaid
-graph TB
-  subgraph ModSources[Modulation Sources]
-    UI[Encoders / Macros]
-    LFO[LFO / Random]
-    MIDIIN["MIDI In (CC/Notes)"]
-  end
-
-  subgraph Targets[Engine Targets]
-    DENS[Density / Euclidean K]
-    SKIP[Skip / Probability]
-    RATCH[Ratchet]
-    GATE[Gate Length]
-    PITCH[Pitch / Interval / Quantize]
-    SWING[Swing / Microtiming]
-    MUT[Mutation Rate / Mode]
-  end
-
-  UI --> DENS
-  UI --> PITCH
-  UI --> MUT
-  LFO --> SWING
-  LFO --> GATE
-  MIDIIN --> RATCH
-  MIDIIN --> SKIP
-```
+KOSMOS is designed as a minimal, expressive generative sequencer—  
+a device that breathes, reacts, and evolves with musical intention.
