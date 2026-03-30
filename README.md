@@ -31,7 +31,7 @@ This version **v1.2.1** focuses on refining the sequencer engine for more stable
 - Multi‑timbral digital synthesis  
 - Runs on RP2040 Core1 for stable audio performance  
 - Supports CC‑based parameter control  
-- Clean, low‑noise output via PCM5102 DAC or Waveshare PicoAudio
+- Clean, low‑noise output via PCM5102 DAC
 
 ### 🖥 LCD User Interface (240×240)
 - Real‑time step bar visualization  
@@ -42,7 +42,7 @@ This version **v1.2.1** focuses on refining the sequencer engine for more stable
 ### 🔌 Connectivity
 - Standard MIDI OUT  
 - USB‑MIDI support  
-- Runs on RP2040 (Raspberry Pi Pico / Waveshare PicoAudio recommended)
+- Runs on RP2040 (Raspberry Pi Pico)
 
 ---
 
