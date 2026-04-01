@@ -1,123 +1,247 @@
-# KOSMOS  
-A generative MIDI sequencer for RP2040  
-Version **v1.2.1**
+# KOSMOS v1.3.0
 
-KOSMOS is a standalone generative MIDI sequencer built on the RP2040.  
-It blends Euclidean rhythms, step sequencing, and expressive parameter mapping into a compact, minimal, and musical device.
+KOSMOS is a compact generative MIDI sequencer designed to run on the RP2040 microcontroller.
+Version **v1.3.0** introduces a hardware-focused update with full support for the **Waveshare Pico-Audio** board, including a simple and expressive button-based control interface.
 
-KOSMOS includes a built‑in **multi‑timbral digital synth engine based on ISGK Instruments' PRA32‑U**, running on Core1.  
-This allows KOSMOS to function not only as a sequencer but also as a self‑contained sound module when desired.
-
-This version **v1.2.1** focuses on refining the sequencer engine for more stable, expressive, and predictable generative behavior.
+This update makes KOSMOS more playable and suitable for standalone performance and experimentation.
 
 ---
 
-## 🎬 Demo Video
+## Hardware Support
 
-[![KOSMOS Demo (YouTube Shorts)](https://img.youtube.com/vi/pYgWGcJLjj8/0.jpg)](https://youtube.com/shorts/pYgWGcJLjj8)
+### Waveshare Pico-Audio
 
----
+KOSMOS v1.3.0 is optimized for use with the **Waveshare Pico-Audio** board.
 
-## 🌌 Features
+The Pico-Audio provides:
+- RP2040-compatible audio and GPIO layout
+- Dedicated physical buttons (A / B / X / Y)
+- A compact form factor suitable for embedded musical devices
 
-### 🎛 Generative Sequencer
-- Hybrid engine combining **Euclidean**, **Step**, and **Both** modes  
-- Scale‑aware arpeggio generation  
-- Scene‑based transitions with speed, width, density, direction, and duration mapping  
-- Improved timing stability and event scheduling (v1.2.1)
-
-### 🎹 Built‑in Digital Synth Engine (PRA32‑U Multi‑Timbral)
-- Powered by **ISGK Instruments PRA32‑U**  
-- Multi‑timbral digital synthesis  
-- Runs on RP2040 Core1 for stable audio performance  
-- Supports CC‑based parameter control  
-- Clean, low‑noise output via PCM5102 DAC or Waveshare PicoAudio
-
-### 🖥 LCD User Interface (240×240)
-- Real‑time step bar visualization  
-- Parameter display with live updates  
-- Mode indicators (E / S / B)  
-- Smooth rendering on Core0 for stable UI performance  
-
-### 🔌 Connectivity
-- Standard MIDI OUT  
-- USB‑MIDI support  
-- Runs on RP2040 (Raspberry Pi Pico / Waveshare PicoAudio recommended)
+All button inputs are now directly mapped to musical and performance-related functions inside KOSMOS.
 
 ---
 
-## 🆕 What’s New in v1.2.1
+## Button Interface
 
-### 🔧 Sequencer Engine Improvements
-- Refined event scheduling for tighter rhythmic accuracy  
-- Improved step/Euclid hybrid behavior in **Both** mode  
-- Reduced micro‑timing drift during long generative sessions  
-- More predictable arpeggio width & direction transitions  
-- Enhanced internal state recovery after rapid parameter changes  
+KOSMOS uses the four physical buttons on the Waveshare Pico-Audio as real-time performance controls.
 
-### 🖥 UI Enhancements
-- Step bar update timing improved for smoother animation  
-- Reduced flicker and unnecessary redraws  
-- More responsive parameter display
+### Button Assignments
 
-### 🎼 Musicality Improvements
-- Better distribution of notes in high‑density Euclid patterns  
-- More natural phrasing when switching scales or scenes  
-- Improved consistency between visual steps and generated events
+| Button | Function |
+|------|---------|
+| **A** | Program Change for **MIDI Channel 1** |
+| **B** | Program Change for **MIDI Channel 2** |
+| **X** | **Tempo Change** |
+| **Y** | **Pattern Change** |
 
----
 
-## 📦 Installation
+```mermaid
+flowchart TD
+    Start["Button Press Detected"]
 
-### 1. Download the Firmware
-Grab the latest UF2 from the **Releases** page:  
-`KOSMOS_v1.2.1.uf2`
+    Start --> A["A Button"]
+    Start --> B["B Button"]
+    Start --> X["X Button"]
+    Start --> Y["Y Button"]
 
-### 2. Flash to RP2040
-1. Hold **BOOTSEL** on your RP2040  
-2. Connect via USB  
-3. Copy the UF2 file to the mounted drive  
+    A --> A1["Send MIDI Program Change"]
+    A1 --> A2["Channel 1"]
 
-### 3. Connect Hardware
-- RP2040 board (Pico or Waveshare PicoAudio)  
-- PCM5102 DAC (if not using PicoAudio)  
-- MIDI OUT or USB‑MIDI to your DAW/synth  
+    B --> B1["Send MIDI Program Change"]
+    B1 --> B2["Channel 2"]
+
+    X --> X1["Change Sequencer Tempo"]
+
+    Y --> Y1["Switch Generative Pattern"]
 
 ---
 
-## 🎹 Usage
+### Detailed Behavior
 
-### Modes
-- **E** – Euclidean rhythm generator  
-- **S** – Step sequencer  
-- **B** – Hybrid mode (Euclid × Step)
+#### A Button ? Channel 1 Program Change
+Pressing the **A button** sends a MIDI Program Change message on **Channel 1**.
+Each press cycles through available programs in sequence.
 
-### Parameters
-- **Speed** – Arpeggio rate  
-- **Width** – Interval spread  
-- **Density** – Event probability / Euclid fill  
-- **Direction** – Up / Down / Ping‑pong / Random  
-- **Duration** – Note length  
+#### B Button ? Channel 2 Program Change
+Pressing the **B button** sends a MIDI Program Change message on **Channel 2**.
+This allows independent sound changes for layered or multi-timbral setups.
 
-All parameters update in real time and are reflected on the LCD.
+#### X Button ? Tempo Change
+Pressing the **X button** changes the global tempo of the sequencer.
+This enables quick variation of groove and rhythmic feel during playback.
 
----
-
-## 🛠 Hardware
-
-### Recommended
-- PCM5102  
-- 240×240 SPI LCD (ST7789)  
-- RP2040 (Raspberry Pi Pico)
-
-## 📄 License
-KOSMOS is released under the **MIT License**.  
-The built‑in sound engine is based on **PRA32‑U (CC0 License)** by ISGK Instruments.
+#### Y Button ? Pattern Change
+Pressing the **Y button** switches to a different generative pattern.
+Patterns define note density, rhythmic structure, and generative behavior.
 
 ---
 
-## 🌠 Special Thanks
-**Powered by ISGK Instruments PRA32‑U**  
+## Use Case
 
-KOSMOS is designed as a minimal, expressive generative sequencer—  
-a device that breathes, reacts, and evolves with musical intention.
+With this button mapping, KOSMOS can be used as:
+- A hands-on generative MIDI instrument
+- A compact live performance sequencer
+- A standalone algorithmic composition tool
+
+All core musical parameters can be adjusted without a computer or external controller.
+
+---
+
+## System Flow
+```mermaid
+flowchart TD
+    PowerOn[Power On] --> Init[System Initialize]
+
+    Init --> HW[Hardware Setup]
+    Init --> MIDI[MIDI Setup]
+    Init --> Pattern[Pattern Engine Init]
+
+    HW --> Buttons[Button Input]
+    Buttons --> Control[Control Logic]
+
+    Control --> Pattern
+    Pattern --> Sequencer[Generative Sequencer]
+
+    Sequencer --> MIDIOut[MIDI Output]
+
+## Main Loop
+```mermaid
+flowchart TD
+    LoopStart[Main Loop]
+
+    LoopStart --> ReadBtn[Read Button State]
+    ReadBtn --> HandleBtn[Handle Button Events]
+
+    HandleBtn --> GenStep[Generate Sequence Step]
+    GenStep --> Clock[Wait for Clock / Timer]
+
+    Clock --> MIDIEvent[MIDI Event Output]
+    MIDIEvent --> LoopStart
+
+## Button Interface
+```mermaid
+flowchart TD
+    A[A Button] -->|Program Change| CH1[MIDI Channel 1]
+    B[B Button] -->|Program Change| CH2[MIDI Channel 2]
+    X[X Button] --> TEMPO[Global Tempo]
+    Y[Y Button] --> PATTERN[Pattern Selector]
+
+##  MIDI Out Flow
+```mermaid
+flowchart TD
+    Pattern[Pattern Algorithm]
+    Tempo[Tempo]
+    Program[Program State]
+
+    Pattern --> NoteGen[Note Generator]
+    Tempo --> NoteGen
+    Program --> NoteGen
+
+    NoteGen --> MIDI[MIDI Message Builder]
+    MIDI --> MIDIOut[MIDI OUT]
+
+## Algorithm Flow
+```mermaid
+flowchart TD
+    Control[Control State]
+    Pattern[Pattern Algorithm]
+    Timeline[Step / Clock]
+
+    Control --> Pattern
+    Timeline --> Pattern
+
+    Pattern --> Params[Musical Parameters]
+    Params --> NoteGen[Note Generator]
+
+    NoteGen --> MIDIBuilder[MIDI Message Builder]
+    MIDIBuilder --> MIDIOut[MIDI OUT]
+
+## Control Layer
+```mermaid
+flowchart TD
+    Button[Button Event]
+    Control[Control State]
+
+    Button -->|A/B| Program[Program Change]
+    Button -->|X| Tempo[Tempo Update]
+    Button -->|Y| PatternSel[Pattern Select]
+
+    Program --> Control
+    Tempo --> Control
+    PatternSel --> Control
+
+## Generation Layer
+```mermaid
+flowchart TD
+    Clock[Clock / Step Tick] --> Pattern[Pattern Algorithm]
+
+    Pattern --> Density[Note Density]
+    Pattern --> PitchRule[Pitch Rule]
+    Pattern --> RhythmRule[Rhythm Rule]
+
+    Density --> Decision[Play Decision]
+    PitchRule --> Decision
+    RhythmRule --> Decision
+
+## Note Generator
+```mermaid
+flowchart TD
+    Decision[Pattern Decision]
+
+    Decision -->|Yes| Note[Generate Note]
+    Decision -->|No| Rest[Rest]
+
+    Note --> Velocity[Velocity Calc]
+    Note --> Duration[Gate Time]
+
+## MIDI Builder
+```mermaid
+flowchart TD
+    Note[Note Data]
+
+    Note --> NoteOn[MIDI Note On]
+    Note --> NoteOff[MIDI Note Off]
+
+    Program[Program State] --> MIDIBuilder
+    Tempo[Tempo] --> MIDIBuilder
+
+    MIDIBuilder --> MIDIOut[MIDI OUT]
+
+## Inner Flow
+```mermaid
+flowchart TD
+    Control[Control State]
+
+    Control --> Pattern
+    Pattern --> Pitch
+    Pattern --> Rhythm
+
+    Pitch --> Scale
+    Scale --> Randomness
+
+    Rhythm --> Randomness
+
+    Randomness --> MIDI[MIDI Output]
+
+---
+
+## Version History
+
+### v1.3.0
+- Added Waveshare Pico-Audio support
+- Implemented full button interface
+- Program Change control for MIDI Channels 1 and 2
+- Real-time tempo and pattern switching
+
+---
+
+## License
+
+MIT License.
+
+---
+
+## Special Thanks
+
+  Powerd by ISGK Instruments PRA32-U

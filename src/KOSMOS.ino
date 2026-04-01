@@ -1,23 +1,29 @@
-/* KOSMOS + PRA32-U (All-in-One: PCM5102 version) */
+/* KOSMOS + PRA32-U (All-in-One:  Waveshare Pico-Audio version) */
 #include <Arduino.h>
 
 // Optional: give Core1 8KB stack if needed
 bool core1_separate_stack = true;
 
-// ----------------------- PRA32-U on Core1 (I2S + PCM5102A) ----------------------
+// ----------------------- PRA32-U on Core1 (I2S + Waveshare Pico-Audio) ----------------------
 #include <I2S.h>
 
 #define PRA32_U_VERSION "v3.3.0 "
 #define PRA32_U_MIDI_CH (0)
 
-// I2S / DAC ピン定義
+// I2S / DAC ピン定義（Waveshare Pico-Audio）
 #define PRA32_U_I2S_DAC_MUTE_OFF_PIN (22)
-#define PRA32_U_I2S_DATA_PIN  (28)
-#define PRA32_U_I2S_BCLK_PIN  (26)  // LRCLK = BCLK+1 → GP27
 
-// PRA32-U のバッファ設定（使わないが残しておいてOK）
+// Waveshare Pico-Audio:
+// DIN  = GP26
+// BCK  = GP27
+// LRCK = GP28
+#define PRA32_U_I2S_DATA_PIN  (26)  // DIN
+#define PRA32_U_I2S_BCLK_PIN  (27)  // BCK
+#define PRA32_U_I2S_LRCLK_PIN (28)  // LRCK
+
+// PRA32-U のバッファ設定
 #define PRA32_U_I2S_BUFFERS      (4)
-#define PRA32_U_I2S_BUFFER_WORDS (64)
+#define PRA32_U_I2S_BUFFER_WORDS (32)
 
 // 内部 MIDI ブリッジ（すでにあなたのコードにあるやつ）
 enum MidiEvType : uint8_t { EV_NOTE_ON=0, EV_NOTE_OFF=1, EV_CC=2 };
@@ -49,14 +55,16 @@ I2S i2s(OUTPUT);
 // ------------------------------------------------------
 void __not_in_flash_func(core1_main)() {
 
+    pinMode(PRA32_U_I2S_DAC_MUTE_OFF_PIN, OUTPUT);
+    digitalWrite(PRA32_U_I2S_DAC_MUTE_OFF_PIN, HIGH);  // ミュート解除
+
     g_synth.initialize();
     g_sub_synth.initialize();
     g_synth.program_change(11);
     g_sub_synth.program_change(8);
 
-   // ★ I2S 初期化（必須）
-    i2s.setBCLK(26);
-    i2s.setDATA(28);
+    i2s.setDATA(26);
+    i2s.setBCLK(27);
     i2s.setBitsPerSample(16);
     i2s.setFrequency(48000);
     i2s.begin();
@@ -78,9 +86,21 @@ void __not_in_flash_func(core1_main)() {
                 if (ch == 0) g_synth.note_off(ev.d1);
                 else if (ch == 1) g_sub_synth.note_off(ev.d1);
             }
+            else if (ev.type == EV_CC) {
+                 if (ev.d1 == 100) {  // CC100 = 音色変更
+                     uint8_t prog = ev.d2;
+
+                     if (ch == 0) {
+                         g_synth.program_change(prog);
+                     }
+                     else if (ch == 1) {
+                         g_sub_synth.program_change(prog);
+                     }
+                 }
+             }
         }
 
-        // ★ I2S バッファ生成
+        // -★ I2S バッファ生成
         for (int i = 0; i < N; i++) {
 
             int16_t subR;
@@ -89,8 +109,8 @@ void __not_in_flash_func(core1_main)() {
             int16_t mainR;
             int16_t mainL = g_synth.process(subL, mainR);
 
-            Lbuf[i] = mainL;
-            Rbuf[i] = mainR;
+            Lbuf[i] = mainL * 0.7f;
+            Rbuf[i] = mainR * 0.7f;
         }
 
         // ★ I2S 出力
@@ -128,19 +148,22 @@ Adafruit_USBD_MIDI usb_midi;
 #define LCD_MOSI 11
 #define LCD_SPI SPI1
 
+// ---- A/B/X/Y ----
 #define KEY_A_PIN    15
 #define KEY_B_PIN    17
 #define KEY_X_PIN    19
 #define KEY_Y_PIN    21
 
-#define LEFT_PIN   21
-#define DOWN_PIN   19
-#define UP_PIN     17
-#define RIGHT_PIN  15
+// ---- 十字キー（固定）----
+#define LEFT_PIN   14
+#define DOWN_PIN   16
+#define UP_PIN     18
+#define RIGHT_PIN  20
 
-#define JOY_X_PIN 27   // 左右
-#define JOY_Y_PIN 26   // 上下
-#define JOY_SW_PIN 3  // 押し込み
+// ---- Joystick ----
+#define JOY_X_PIN 6
+#define JOY_Y_PIN 7
+#define JOY_SW_PIN 0   // ★ ここを 8 から変更（最重要）
 
 // 5x7 ASCII フォント (32〜127)
 const uint8_t font5x7[][5] = {
@@ -241,6 +264,18 @@ const uint8_t font5x7[][5] = {
   {0x08,0x04,0x08,0x10,0x08}, // 126 '~'
 };
 
+// ============================================================
+// ★ BPM テーブル（X ボタン用）
+// ============================================================
+const int BPM_TABLE[] = {20, 80, 140, 200, 260};
+const int BPM_COUNT = 5;
+
+// ---- テンポ（内部 BPM のみ）----
+int baseBPM  = 80;   // 基本 BPM
+int stepBPM  = 80;   // ステップ進行用 BPM
+
+int bpmIndex = 1; // 初期値 80BPM（TABLE[1])
+
 int transpose = 3;   // -24〜+24 くらいまで対応（2オクターブ）
 
 bool btnA = false;
@@ -276,6 +311,10 @@ int arpFlipWidth = 3;
 bool arpNoteOn = false;
 uint8_t arpLastNote = 0;
 unsigned long arpNoteOffTime = 0;
+
+bool noteIsOnB = false;
+uint8_t lastNoteB = 0;
+unsigned long noteOffTimeB = 0;
 
 // ★ 8分ステップ管理
 unsigned long lastStep = 0;
@@ -371,17 +410,182 @@ int rhythmPatterns[5][16] = {
     // パターン4：後半に寄る（タメ・尺八的）
     {0,0,1,0,0,1,0,1,1,0,1,1,0,1,0,1}
 };
+
 int currentPattern = 0;
 
 int noteToY(uint8_t note) {
     return map(note, 36, 84, 240, 150);  // 下が低音、上が高音
 }
 
+// ---- 音色番号（LCD表示用）----
+int programA = 11;   // ch1 初期音色
+int programB = 8;    // ch2 初期音色
+
+// ---- ボタン状態管理 ----
+bool lastA = false;
+bool lastB = false;
+
+unsigned long pressStartA = 0;
+unsigned long pressStartB = 0;
+
+unsigned long lastStepA = 0;   // ← 外に出す（重要）
+unsigned long lastStepB = 0;   // ← 外に出す（重要）
+
+// ---- X ボタン状態管理 ----
+bool lastX = false;
+unsigned long pressStartX = 0;
+unsigned long lastStepX = 0;
+
+// ============================================================
+// ★ Yボタン（リズムパターン切替）
+// ============================================================
+bool lastY = false;
+unsigned long pressStartY = 0;
+unsigned long lastStepY = 0;
+
+const int RHYTHM_PATTERN_COUNT = 5;
+
 void readButtons() {
-  btnLeft  = (digitalRead(LEFT_PIN)  == LOW);
-  btnRight = (digitalRead(RIGHT_PIN) == LOW);
-  btnUp    = (digitalRead(UP_PIN)    == LOW);
-  btnDown  = (digitalRead(DOWN_PIN)  == LOW);
+
+    bool nowA = (digitalRead(KEY_A_PIN) == LOW);
+    bool nowB = (digitalRead(KEY_B_PIN) == LOW);
+    bool nowX = (digitalRead(KEY_X_PIN) == LOW);
+    bool nowY = (digitalRead(KEY_Y_PIN) == LOW);
+
+    // ============================================================
+    // ★ A ボタン（ch1）
+    // ============================================================
+
+    if (nowA && !lastA) {
+        pressStartA = millis();
+    }
+
+    if (!nowA && lastA) {
+        unsigned long dur = millis() - pressStartA;
+        if (dur < 300) {
+            programA = random(0, 16);
+            midi_bridge_send_cc(100, programA, 0);
+            drawProgramInfo();
+        }
+    }
+
+    if (nowA && lastA) {
+        unsigned long dur = millis() - pressStartA;
+        if (dur >= 300) {
+            if (millis() - lastStepA >= 200) {
+                lastStepA = millis();
+                programA = (programA + 1) % 16;
+                midi_bridge_send_cc(100, programA, 0);
+                drawProgramInfo();
+            }
+        }
+    }
+
+    // ============================================================
+    // ★ B ボタン（ch2）
+    // ============================================================
+
+    if (nowB && !lastB) {
+        pressStartB = millis();
+    }
+
+    if (!nowB && lastB) {
+        unsigned long dur = millis() - pressStartB;
+        if (dur < 300) {
+            programB = random(0, 16);
+            midi_bridge_send_cc(100, programB, 1);
+            drawProgramInfo();
+        }
+    }
+
+    if (nowB && lastB) {
+        unsigned long dur = millis() - pressStartB;
+        if (dur >= 300) {
+            if (millis() - lastStepB >= 200) {
+                lastStepB = millis();
+                programB = (programB + 1) % 16;
+                midi_bridge_send_cc(100, programB, 1);
+                drawProgramInfo();
+            }
+        }
+    }
+
+    // ============================================================
+    // ★ X ボタン（リズムパターン切替） ← 元Yの機能
+    // ============================================================
+
+    if (nowX && !lastX) {
+        pressStartX = millis();
+    }
+
+    if (!nowX && lastX) {
+        unsigned long dur = millis() - pressStartX;
+        if (dur < 300) {
+            currentPattern = random(0, RHYTHM_PATTERN_COUNT);
+            memcpy(mainPattern,
+                   rhythmPatterns[currentPattern],
+                   sizeof(mainPattern));
+        }
+    }
+
+    if (nowX && lastX) {
+        unsigned long dur = millis() - pressStartX;
+        if (dur >= 300) {
+            if (millis() - lastStepX >= 200) {
+                lastStepX = millis();
+                currentPattern =
+                    (currentPattern + 1) % RHYTHM_PATTERN_COUNT;
+
+                memcpy(mainPattern,
+                       rhythmPatterns[currentPattern],
+                       sizeof(mainPattern));
+            }
+        }
+    }
+
+    // ============================================================
+    // ★ Y ボタン（BPM） ← 元Xの機能
+    // ============================================================
+
+    if (nowY && !lastY) {
+        pressStartY = millis();
+    }
+
+    if (!nowY && lastY) {
+        unsigned long dur = millis() - pressStartY;
+        if (dur < 300) {
+            bpmIndex = random(0, BPM_COUNT);
+            baseBPM = BPM_TABLE[bpmIndex];
+            drawTopText();
+        }
+    }
+
+    if (nowY && lastY) {
+        unsigned long dur = millis() - pressStartY;
+        if (dur >= 300) {
+            if (millis() - lastStepY >= 200) {
+                lastStepY = millis();
+                bpmIndex = (bpmIndex + 1) % BPM_COUNT;
+                baseBPM = BPM_TABLE[bpmIndex];
+                drawTopText();
+            }
+        }
+    }
+
+    // ============================================================
+    lastA = nowA;
+    lastB = nowB;
+    lastX = nowX;
+    lastY = nowY;
+}
+
+void drawProgramInfo() {
+    lcdFillRect(0, 35, 240, 20, COLOR_BLACK);
+
+    char buf[32];
+    sprintf(buf, "P1:%02d P2:%02d", programA, programB);
+
+    lcdPrint(5, 40, buf, COLOR_WHITE, COLOR_BLACK, 1);
 }
 
 // 中心値
@@ -596,6 +800,7 @@ void drawUI() {
     updateStepBars();
     updateStepDots();
     drawRandomMode();
+    drawProgramInfo();
 }
 
 void drawOneProbabilityBar(int i) {
@@ -950,10 +1155,6 @@ uint8_t lastNoteA = 0;
 bool noteIsOnA = false;
 unsigned long noteOffTimeA = 0;
 
-// ---- テンポ（内部 BPM のみ）----
-int baseBPM  = 80;   // 基本 BPM
-int stepBPM  = 80;   // ステップ進行用 BPM
-
 void drawTopText() {
     static int lastSteps = -1;
     static int lastHits = -1;
@@ -1014,61 +1215,11 @@ void drawTopText() {
     if (stepBPM != lastBPM) {
          lcdFillRect(130, 20, 60, 20, COLOR_BLACK);  // BPM 表示エリアだけ消す
 
-         sprintf(buf, "BPM:%d", stepBPM);
+         sprintf(buf, "BPM:%d", baseBPM);
          lcdPrint(130, 25, buf, COLOR_GREEN, COLOR_BLACK, 1);
 
          lastBPM = stepBPM;
     }
-}
-
-void updateProbability() {
-  static bool prevLeft  = false;
-  static bool prevRight = false;
-  static bool prevUp    = false;
-  static bool prevDown  = false;
-  static bool prevA     = false;
-
-  // --- 左 ---
-  if (!prevLeft && btnLeft) {
-    selectedStep = (selectedStep + 15) % 16;   // 左へ
-    drawTopText();                             // 差分描画
-    updateProbabilityBars();                   // 差分描画
-  }
-
-  // --- 右 ---
-  if (!prevRight && btnRight) {
-    selectedStep = (selectedStep + 1) % 16;    // 右へ
-    drawTopText();
-    updateProbabilityBars();
-  }
-
-  // --- 上（+5%） ---
-  if (!prevUp && btnUp) {
-    prob[selectedStep] = min(100, prob[selectedStep] + 5);
-    drawTopText();
-    updateProbabilityBars();
-  }
-
-  // --- 下（-5%） ---
-  if (!prevDown && btnDown) {
-    prob[selectedStep] = max(0, prob[selectedStep] - 5);
-    drawTopText();
-    updateProbabilityBars();
-  }
-
-  // --- Aボタン（0 ↔ 100 トグル） ---
-  if (!prevA && btnA) {
-    prob[selectedStep] = (prob[selectedStep] == 0 ? 100 : 0);
-    drawTopText();
-    updateProbabilityBars();
-  }
-
-  // --- ボタン状態更新 ---
-  prevLeft  = btnLeft;
-  prevRight = btnRight;
-  prevUp    = btnUp;
-  prevDown  = btnDown;
-  prevA     = btnA;
 }
 
 // -----------------------------------------------------
@@ -1148,11 +1299,6 @@ uint8_t generateNoteA(bool &trillFlag, int &degreeOut) {
 int downBias = 50;
 int upBias = 50;
 
-// ---- Track B ----
-uint8_t lastNoteB = 0;
-bool noteIsOnB = false;
-unsigned long noteOffTimeB = 0;
-
 // B の刻み間隔（4分 or 8分）
 int noteBDiv = 2;  
 // 2 = 4分（8分×2）
@@ -1161,15 +1307,12 @@ int noteBDiv = 2;
 uint8_t generateNoteB() {
 
     const uint8_t* sc;
-    int scSize;
 
     // 今は平調子固定ならこれでOK
     sc = SCALE_HEI;
-    scSize = SCALE_HEI_SIZE;
 
     // ★ 5度（スケール index=3）
     uint8_t fifth = 60 + transpose - 24 + sc[3];
-    //uint8_t fifth = 60 + transpose - 36 + sc[3];
 
     return fifth;
 }
@@ -1558,6 +1701,13 @@ int findNearestDegree(uint8_t note, const uint8_t* sc, int scSize, int transpose
     return bestDeg;
 }
 
+void drawSplash() {
+    lcdFill(COLOR_BLACK);
+    lcdPrint(65, 100, "KOSMOS", COLOR_WHITE, COLOR_BLACK, 3);
+    lcdPrint(95, 135, "v1.3.0", COLOR_DARK_GRAY, COLOR_BLACK, 1);
+    delay(3000);
+}
+
 void setup() {
   Serial.begin(115200);
   delay(200);
@@ -1567,15 +1717,21 @@ void setup() {
 
   lcdInit();
   
+  drawSplash();
+
   lcdFill(COLOR_BLACK);
+
+  pinMode(KEY_A_PIN, INPUT_PULLUP);
+  pinMode(KEY_B_PIN, INPUT_PULLUP);
+  pinMode(KEY_X_PIN, INPUT_PULLUP);
+  pinMode(KEY_Y_PIN, INPUT_PULLUP);
 
   for (int i = 0; i < 16; i++) prob[i] = 100;
 
   executeRandom();
   nextArpEventTime = millis() + random(10000, 20000);
   transpose += 5;
-  baseBPM = max(20, baseBPM - 4);
-
+  
   // ---- 起動時アルペジオ初期化（美しい低音スタート） ----
   int baseDegree = SCALE_HEI[0];   // 平調子の最も低い度数（D）
   int baseOct = 6;                 // C6
@@ -1622,6 +1778,8 @@ void setup() {
   // ★★★ Core0 の初期化が全部終わってから Core1 を起動する ★★★
   multicore_launch_core1(core1_main);
 
+  lastX = (digitalRead(KEY_X_PIN) == LOW);
+
   Serial.println("Core0: setup done, Core1 launched");
 }
 
@@ -1631,6 +1789,28 @@ bool arpWantsToEnd = false;   // ★ 終了希望フラグ（実際にはまだ�
 
 void loop() {
     unsigned long now = millis();
+
+    // =====================================================
+    // ★ NoteOff（A / B / Arp）をここにまとめて置く
+    // =====================================================
+
+    // ---- A（メイン） ----
+    if (noteIsOnA && now >= noteOffTimeA) {
+        midi_bridge_send_note_off(lastNoteA, 0);
+        noteIsOnA = false;
+    }
+
+    // ---- B（今回追加した ch2）----
+    if (noteIsOnB && now >= noteOffTimeB) {
+        midi_bridge_send_note_off(lastNoteB, 1);
+        noteIsOnB = false;
+    }
+
+    // ---- Arp（アルペジオ）----
+    if (arpNoteOn && now >= arpNoteOffTime) {
+        midi_bridge_send_note_off(arpLastNote, 0);
+        arpNoteOn = false;
+    }
 
     // =====================================================
     // 1. メインパターン完全サイレンス
@@ -1663,7 +1843,7 @@ void loop() {
     // 2. 入力
     // =====================================================
     readButtons();
-    readJoystick();
+    //readJoystick();
 
     // =====================================================
     // 3. 呼吸 BPM
@@ -1786,201 +1966,32 @@ void loop() {
     }
 
     // =====================================================
-    // ★ Track B（ルート刻み）
+    // ★ ch2（noteB）: rhythmPatterns に従って鳴く
     // =====================================================
-    if (!mainSilenceActive) {
-        int stepAhead = (currentStep + 15) % 16;
-        if (stepAhead % noteBDiv == 0) {
-            if (noteIsOnB) {
-                sendNoteOffCh(lastNoteB, 1);
-                noteIsOnB = false;
-            }
-            uint8_t noteB = generateNoteB();
-            int velB = 70 + random(-10, 10);
-            unsigned long ahead = interval * 0.20;
-            if (now + ahead >= lastStep + interval) {
-                sendNoteOnCh(noteB, velB, 1);
-                lastNoteB = noteB;
-                noteIsOnB = true;
-            }
-            noteOffTimeB = now + 200;
+    if (rhythmPatterns[currentPattern][currentStep] == 1) {
+
+        // ルート固定
+        uint8_t noteB = 48;  // 好きなルートに変更可
+
+        // ベロシティは少し揺らすと自然
+        int velB = 70 + random(-10, 10);
+
+        // ノートオン
+        midi_bridge_send_note_on(noteB, velB, 1);
+        noteIsOnB = true;
+        lastNoteB = noteB;
+
+        // ノートオフ予約（短め）
+        noteOffTimeB = now + (interval * 0.85);
+
+    } else {
+        // 休符 → ノートオフ
+        if (noteIsOnB) {
+            midi_bridge_send_note_off(lastNoteB, 1);
+            noteIsOnB = false;
         }
     }
 
-    if (noteIsOnB && now >= noteOffTimeB) {
-        sendNoteOffCh(lastNoteB, 1);
-        noteIsOnB = false;
-    }
-
-    /*
-    // =====================================================
-    // 9. メインステップ（8分 × 16）
-    // =====================================================
-    interval = 60000UL / max(stepBPM, 30) / 4;
-
-    // ★ アルペジオ終了直後は即メインへ吸着（完全版）
-    if (forceMainStep) {
-        forceMainStep = false;
-
-        lastMainStepTime = now;
-        currentStep = (currentStep + 1) % 16;
-
-        if (mainPattern[currentStep] == 1) {
-
-            const uint8_t* sc = SCALE_HEI;
-            int scSize = SCALE_HEI_SIZE;
-
-            uint8_t bridged = mapToScale(lastNoteA, sc, scSize);
-            int deg = findNearestDegree(bridged, sc, scSize, transpose);
-
-            deg += (arpGoingUp ? +1 : -1);
-            deg = constrain(deg, 0, scSize - 1);
-
-            mainDegree = deg;
-
-            uint8_t noteA = 60 + transpose + sc[deg];
-            
-            safeNoteOffA();
-
-            int velA = map(stepBPM, 30, 140, 70, 120) + random(-10, 10);
-            sendNoteOnCh(noteA, velA, 0);
-
-            lastNoteA = noteA;
-            noteIsOnA = true;
-            noteOffTimeA = now + (interval / 4);
-
-            pushNoteDot(noteA);
-            drawNoteDots();
-        } else {
-            if (noteIsOnA) safeNoteOffA();
-        }
-
-        updateStepBars();
-        updateStepDots();
-        drawTopText();
-
-        // ★ このフレームで完全に処理を終える
-        return;
-    }
-
-    if (now - lastMainStepTime >= interval) {
-        lastMainStepTime = now;
-        currentStep = (currentStep + 1) % 16;
-
-        // ★ 8分の頭でだけ「本当に終わっていい」ことにする
-        if (arpWantsToEnd && arpEventActive) {
-            arpEndPending = true;   // ★ ここで初めて終了予約に昇格
-            arpWantsToEnd = false;
-        }
-        
-        // ★ アルペジオ終了処理（吸着ポイント）
-        if (arpEndPending) {
-
-            if (arpNoteOn) {
-                sendNoteOffCh(arpLastNote, 0);
-                arpNoteOn = false;
-            }
-
-            //safeNoteOffA();
-
-            arpEventActive = false;
-            arpEndPending  = false;
-            arpStartPending = false;
-
-            nextArpEventTime = millis() + random(3000, 8000);
-
-            // ★ メインへ即吸着
-            forceMainStep = true;
-        }
-
-        // ---- アルペジオ開始 ----
-        if (arpStartPending && !arpEventActive) {
-
-            arpStartPending = false;
-
-            arpEventActive  = true;
-            arpEventCount   = 0;
-            arpRepeatCount  = 0;
-
-            // ★ 起動直後だけ 10秒前後
-            if (firstArp) {
-                arpRepeatTarget = random(10, 15);
-                arpFlipWidth    = random(3, 5);
-                firstArp = false;
-            } else {
-                arpRepeatTarget = arpLengthTable[scaleMode];
-                arpFlipWidth    = random(2, 5);
-            }
-
-            degreeA = 0;
-            dirA = 1;
-
-            arpGoingUp = (rand() % 100 < 60);
-
-            nextArpStepTime = now + 10;
-        }
-
-        // ---- アルペジオ中はメインを鳴かない ----
-        if (arpEventActive) {
-            updateStepBars();
-            updateStepDots();
-            drawTopText();
-            return;
-        }
-
-        // ---- メインノート ----
-        if (noteIsOnA && now >= noteOffTimeA) {
-            safeNoteOffA();
-        }
-
-        if (mainPattern[currentStep] == 1) {
-
-            static int mainDegree = 8;
-            static bool mainGoingDown = true;
-
-            if (mainGoingDown) {
-                mainDegree--;
-                if (mainDegree <= 0) {
-                    mainDegree = 0;
-                    mainGoingDown = false;
-                }
-            } else {
-                mainDegree++;
-                if (mainDegree >= 8) {
-                    mainDegree = 8;
-                    mainGoingDown = true;
-                }
-            }
-
-            const uint8_t* sc;
-            int scSize;
-            sc = SCALE_HEI; 
-            scSize = SCALE_HEI_SIZE;
-
-            int idx = mainDegree % scSize;
-            uint8_t noteA = 60 + transpose + sc[idx];
-            
-            safeNoteOffA();
-
-            int velA = map(stepBPM, 30, 140, 70, 120) + random(-10, 10);
-            sendNoteOnCh(noteA, velA, 0);
-            lastNoteA = noteA;
-            noteIsOnA = true;
-
-            noteOffTimeA = now + (interval / 4);
-
-            pushNoteDot(noteA);
-            drawNoteDots();
-
-        } else {
-            if (noteIsOnA) safeNoteOffA();
-        }
-
-        updateStepBars();
-        updateStepDots();
-        drawTopText();
-    }
-    */
     // =====================================================
     // 9. メインステップ（8分 × 16）
     // =====================================================
@@ -2023,7 +2034,7 @@ void loop() {
 
             lastNoteA = noteA;
             noteIsOnA = true;
-            noteOffTimeA = now + (interval / 4);
+            noteOffTimeA = now + (interval * 0.85);
 
             pushNoteDot(noteA);
             drawNoteDots();
@@ -2150,7 +2161,7 @@ void loop() {
 
             lastNoteA = noteA;
             noteIsOnA = true;
-            noteOffTimeA = now + (interval / 4);
+            noteOffTimeA = now + (interval * 0.85);
 
             pushNoteDot(noteA);
             drawNoteDots();
