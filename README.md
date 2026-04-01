@@ -35,6 +35,7 @@ KOSMOS uses the four physical buttons on the Waveshare Pico-Audio as real-time p
 | **X** | **Tempo Change** |
 | **Y** | **Pattern Change** |
 
+---
 
 ```mermaid
 flowchart TD
@@ -54,7 +55,7 @@ flowchart TD
     X --> X1["Change Sequencer Tempo"]
 
     Y --> Y1["Switch Generative Pattern"]
-
+```
 ---
 
 ### Detailed Behavior
@@ -104,6 +105,7 @@ flowchart TD
     Pattern --> Sequencer[Generative Sequencer]
 
     Sequencer --> MIDIOut[MIDI Output]
+```
 
 ## Main Loop
 ```mermaid
@@ -118,6 +120,7 @@ flowchart TD
 
     Clock --> MIDIEvent[MIDI Event Output]
     MIDIEvent --> LoopStart
+```
 
 ## Button Interface
 ```mermaid
@@ -126,6 +129,7 @@ flowchart TD
     B[B Button] -->|Program Change| CH2[MIDI Channel 2]
     X[X Button] --> TEMPO[Global Tempo]
     Y[Y Button] --> PATTERN[Pattern Selector]
+```
 
 ##  MIDI Out Flow
 ```mermaid
@@ -140,6 +144,7 @@ flowchart TD
 
     NoteGen --> MIDI[MIDI Message Builder]
     MIDI --> MIDIOut[MIDI OUT]
+```
 
 ## Algorithm Flow
 ```mermaid
@@ -156,6 +161,7 @@ flowchart TD
 
     NoteGen --> MIDIBuilder[MIDI Message Builder]
     MIDIBuilder --> MIDIOut[MIDI OUT]
+```
 
 ## Control Layer
 ```mermaid
@@ -170,6 +176,7 @@ flowchart TD
     Program --> Control
     Tempo --> Control
     PatternSel --> Control
+```
 
 ## Generation Layer
 ```mermaid
@@ -183,6 +190,7 @@ flowchart TD
     Density --> Decision[Play Decision]
     PitchRule --> Decision
     RhythmRule --> Decision
+```
 
 ## Note Generator
 ```mermaid
@@ -194,6 +202,7 @@ flowchart TD
 
     Note --> Velocity[Velocity Calc]
     Note --> Duration[Gate Time]
+```
 
 ## MIDI Builder
 ```mermaid
@@ -207,6 +216,7 @@ flowchart TD
     Tempo[Tempo] --> MIDIBuilder
 
     MIDIBuilder --> MIDIOut[MIDI OUT]
+```
 
 ## Inner Flow
 ```mermaid
@@ -223,6 +233,7 @@ flowchart TD
     Rhythm --> Randomness
 
     Randomness --> MIDI[MIDI Output]
+```
 
 ---
 
@@ -244,4 +255,4 @@ MIT License.
 
 ## Special Thanks
 
-  Powerd by ISGK Instruments PRA32-U
+  Powerd by ISGK Instruments PRA32-U.
