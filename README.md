@@ -65,19 +65,19 @@ flowchart TD
 
 ### Detailed Behavior
 
-#### A Button ? Channel 1 Program Change
+#### A Button  Channel 1 Program Change
 Pressing the **A button** sends a MIDI Program Change message on **Channel 1**.
 Each press cycles through available programs in sequence.
 
-#### B Button ? Channel 2 Program Change
+#### B Button  Channel 2 Program Change
 Pressing the **B button** sends a MIDI Program Change message on **Channel 2**.
 This allows independent sound changes for layered or multi-timbral setups.
 
-#### X Button ? Tempo Change
+#### X Button  Tempo Change
 Pressing the **X button** changes the global tempo of the sequencer.
 This enables quick variation of groove and rhythmic feel during playback.
 
-#### Y Button ? Pattern Change
+#### Y Button  Pattern Change
 Pressing the **Y button** switches to a different generative pattern.
 Patterns define note density, rhythmic structure, and generative behavior.
 
