@@ -6,6 +6,11 @@ Version **v1.3.0** introduces a hardware-focused update with full support for th
 This update makes KOSMOS more playable and suitable for standalone performance and experimentation.
 
 ---
+### Demo Video
+
+[![KOSMOS v1.3.0 Demo](https://img.youtube.com/vi/pVmcqiuT9zw/0.jpg)](https://www.youtube.com/shorts/pVmcqiuT9zw)
+
+---
 
 ## Hardware Support
 
