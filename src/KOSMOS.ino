@@ -29,37 +29,13 @@ bool core1_separate_stack = true;
 enum MidiEvType : uint8_t { EV_NOTE_ON=0, EV_NOTE_OFF=1, EV_CC=2 };
 struct MidiEvent { uint8_t type, d1, d2, ch; };
 namespace MidiQ {
-  constexpr size_t QSIZE=256; static volatile uint32_t head=0, tail=0; static MidiEvent q[QSIZE];
+  constexpr size_t QSIZE=64; static volatile uint32_t head=0, tail=0; static MidiEvent q[QSIZE];
   inline bool push(const MidiEvent& ev){uint32_t h=head,n=(h+1)%QSIZE; if(n==tail) return false; q[h]=ev; head=n; return true;}
   inline bool pop(MidiEvent& out){uint32_t t=tail; if(t==head) return false; out=q[t]; tail=(t+1)%QSIZE; return true;}
 }
-
-inline void midi_bridge_send_note_on(uint8_t note,uint8_t vel,uint8_t ch=0){
-    MidiEvent ev{EV_NOTE_ON,note,vel,ch};
-
-    // ★ 最大 100 回だけリトライ（数十マイクロ秒程度）
-    for (int i = 0; i < 100; i++) {
-        if (MidiQ::push(ev)) return;
-        tight_loop_contents();
-    }
-    // ここまで来たら諦めて捨てる（アルペジオの時間軸を優先）
-}
-
-inline void midi_bridge_send_note_off(uint8_t note,uint8_t ch=0){
-    MidiEvent ev{EV_NOTE_OFF,note,0,ch};
-    for (int i = 0; i < 100; i++) {
-        if (MidiQ::push(ev)) return;
-        tight_loop_contents();
-    }
-}
-
-inline void midi_bridge_send_cc(uint8_t cc,uint8_t val,uint8_t ch=0){
-    MidiEvent ev{EV_CC,cc,val,ch};
-    for (int i = 0; i < 50; i++) {   // CC は優先度低めでリトライ回数も少なく
-        if (MidiQ::push(ev)) return;
-        tight_loop_contents();
-    }
-}
+inline void midi_bridge_send_note_on(uint8_t note,uint8_t vel,uint8_t ch=0){Serial.println("Core0: push NoteOn to queue");MidiEvent ev{EV_NOTE_ON,note,vel,ch};MidiQ::push(ev);}  
+inline void midi_bridge_send_note_off(uint8_t note,uint8_t ch=0){MidiEvent ev{EV_NOTE_OFF,note,0,ch};MidiQ::push(ev);}  
+inline void midi_bridge_send_cc(uint8_t cc,uint8_t val,uint8_t ch=0){MidiEvent ev{EV_CC,cc,val,ch};MidiQ::push(ev);}  
 
 // PRA32-U synth 用のグローバル
 uint8_t g_midi_ch = PRA32_U_MIDI_CH;
@@ -302,27 +278,6 @@ int bpmIndex = 1; // 初期値 80BPM（TABLE[1])
 
 int transpose = 3;   // -24〜+24 くらいまで対応（2オクターブ）
 
-// 8分 × 16 のリズムパターン
-int rhythmPatterns[5][16] = {
-    // パターン0：全打ち（基礎）
-    {1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1},
-    
-    // パターン1：交互（跳ね）
-    {1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0},
-
-    // パターン2：余白多め（呼吸）
-    {1,0,0,1,0,0,1,0,1,0,0,1,0,0,1,0},
-
-    // パターン3：連打入り（勢い）
-    {1,1,0,1,0,1,0,1,1,0,1,0,1,0,1,0},
-
-    // パターン4：後半寄り（タメ・尺八的）
-    {0,0,1,0,0,1,0,1,1,0,1,1,0,1,0,1}
-};
-
-int currentPattern = 0;   // 現在のパターン
-int mainDensity = 100;    // 発音率（0〜100%）
-
 bool btnA = false;
 bool btnB = false;
 bool btnX = false;
@@ -335,16 +290,27 @@ bool btnDown = false;
 
 bool btnSW = false;
 
-// ★ 起動時アルペジオ再生済みフラグ
-bool startupArpDone = false;
-
 unsigned long autoModeTimer = 0;
 
 unsigned long noteOffTime = 0;   // ノートを止める時刻
 int noteLengthMin = 50;          // 最短音長（ミリ秒）
 int noteLengthMax = 400;         // 最長音長（ミリ秒）
 
-int noteDots[240] = { -1 };     // x=0〜239 にノートの高さを保存
+int noteDots[240];   // x=0〜239 にノートの高さを保存
+
+// アルペジオ状態管理
+unsigned long nextArpEventTime = 0;
+bool arpEventActive = false;
+unsigned long nextArpStepTime = 0;
+
+int arpEventCount = 0;
+int arpRepeatCount = 0;
+int arpRepeatTarget = 0;
+bool arpGoingUp = true;
+int arpFlipWidth = 3;
+bool arpNoteOn = false;
+uint8_t arpLastNote = 0;
+unsigned long arpNoteOffTime = 0;
 
 bool noteIsOnB = false;
 uint8_t lastNoteB = 0;
@@ -355,10 +321,14 @@ unsigned long lastStep = 0;
 // ★ 8分の長さ（BPM から計算）
 unsigned long interval = 0;
 
+bool arpEndPending = false;     // 終了予約
+bool arpStartPending = false;   // 開始予約
+
 unsigned long nextMainSilenceTime = 0;
 unsigned long mainSilenceDuration = 0;
 bool mainSilenceActive = false;
 
+unsigned long lastArpActivity = 0;
 unsigned long lastMainStepTime = 0;
 unsigned long nextSilenceTime = 0;
 int mainPattern[16];   // 0 = 休符, 1 = 鳴く
@@ -380,7 +350,7 @@ int scaleMode = 0;
 
 // ---- スケールごとの mainPattern 密度（鳴く確率 %） ----
 int mainPatternDensity[3] = {
-    80,
+    100,
     60,
     70
 };
@@ -418,23 +388,30 @@ int arpLengthTable[3] = {
 // ---- スケールごとのアルペジオ間隔時間（ミリ秒） ----
 // 小さいほど速い、値が大きいほどゆっくり
 int arpTimeTable[3] = {
-    40,   // 平調子（HEI） → 明るく速い
-    70,   // 都節（MIYA） → 哀愁、ゆっくり
-    50    // 陰旋法（INSEN） → 渋い、中速
+    86,   // 平調子（HEI） → 明るく速い
+    110,  // 都節（MIYA） → 哀愁、ゆっくり
+    90    // 陰旋法（INSEN） → 渋い、中速
 };
 
-// =====================================================
-// ★ B パート専用リズムパターン（8分 × 16）
-// =====================================================
-int rhythmBPatterns[2][16] = {
-    // パターン0：基本
-    //{1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0},
+// 8分 × 16 のリズムパターン
+int rhythmPatterns[5][16] = {
+    // パターン0：基本（今のあなたのパターン）
+    {1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1},
+    
+    // パターン1：
+    {1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0},
 
-    // パターン1：4分の地鳴り（ドン……ドン……）
-    {1,0,0,0,1,0,0,0,1,0,0,0,1,0,0,0},
+    // パターン2：間が多い（余白・呼吸）
+    {1,0,0,1,0,0,1,0,1,0,0,1,0,0,1,0},
+
+    // パターン3：連打が入る（勢い・跳ね）
+    {1,1,0,1,0,1,0,1,1,0,1,0,1,0,1,0},
+
+    // パターン4：後半に寄る（タメ・尺八的）
+    {0,0,1,0,0,1,0,1,1,0,1,1,0,1,0,1}
 };
 
-int currentBPattern = 0;
+int currentPattern = 0;
 
 int noteToY(uint8_t note) {
     return map(note, 36, 84, 240, 150);  // 下が低音、上が高音
@@ -445,8 +422,8 @@ int programA = 11;   // ch1 初期音色
 int programB = 8;    // ch2 初期音色
 
 // ---- ボタン状態管理 ----
-bool lastAState = false;
-bool lastBState = false;
+bool lastA = false;
+bool lastB = false;
 
 unsigned long pressStartA = 0;
 unsigned long pressStartB = 0;
@@ -479,11 +456,11 @@ void readButtons() {
     // ★ A ボタン（ch1）
     // ============================================================
 
-    if (nowA && !lastAState) {
+    if (nowA && !lastA) {
         pressStartA = millis();
     }
 
-    if (!nowA && lastAState) {
+    if (!nowA && lastA) {
         unsigned long dur = millis() - pressStartA;
         if (dur < 300) {
             programA = random(0, 16);
@@ -492,7 +469,7 @@ void readButtons() {
         }
     }
 
-    if (nowA && lastAState) {
+    if (nowA && lastA) {
         unsigned long dur = millis() - pressStartA;
         if (dur >= 300) {
             if (millis() - lastStepA >= 200) {
@@ -508,11 +485,11 @@ void readButtons() {
     // ★ B ボタン（ch2）
     // ============================================================
 
-    if (nowB && !lastBState) {
+    if (nowB && !lastB) {
         pressStartB = millis();
     }
 
-    if (!nowB && lastBState) {
+    if (!nowB && lastB) {
         unsigned long dur = millis() - pressStartB;
         if (dur < 300) {
             programB = random(0, 16);
@@ -521,7 +498,7 @@ void readButtons() {
         }
     }
 
-    if (nowB && lastBState) {
+    if (nowB && lastB) {
         unsigned long dur = millis() - pressStartB;
         if (dur >= 300) {
             if (millis() - lastStepB >= 200) {
@@ -596,26 +573,19 @@ void readButtons() {
     }
 
     // ============================================================
-    lastAState = nowA;
-    lastBState = nowB;
+    lastA = nowA;
+    lastB = nowB;
     lastX = nowX;
     lastY = nowY;
 }
 
 void drawProgramInfo() {
-    static int lastProgA = -1;
-    static int lastProgB = -1;
-
-    if (programA == lastProgA && programB == lastProgB) return;
-
     lcdFillRect(0, 35, 240, 20, COLOR_BLACK);
 
     char buf[32];
     sprintf(buf, "P1:%02d P2:%02d", programA, programB);
-    lcdPrint(5, 40, buf, COLOR_WHITE, COLOR_BLACK, 1);
 
-    lastProgA = programA;
-    lastProgB = programB;
+    lcdPrint(5, 40, buf, COLOR_WHITE, COLOR_BLACK, 1);
 }
 
 // 中心値
@@ -1126,16 +1096,16 @@ void drawGenerativeBackground() {
 }
 
 void drawNoteDots() {
+    // 下半分をクリア
     lcdFillRect(0, 150, 240, 90, COLOR_BLACK);
 
     for (int x = 0; x < 240; x++) {
-        int y = noteDots[x];
-        if (y >= 150 && y < 240) {   // ★ 範囲チェック
+        if (noteDots[x] >= 0) {
+            int y = noteToY(noteDots[x]);
             lcdDrawPixel(x, y, COLOR_WHITE);
         }
     }
 }
-
 
 void sendNoteOnCh(uint8_t note, uint8_t velocity, uint8_t ch) {
     uint8_t msg[3] = { (uint8_t)(0x90 | (ch & 0x0F)), note, velocity };
@@ -1174,18 +1144,16 @@ bool noteIsOn = false;
 unsigned long clockInterval = 0;
 
 void pushNoteDot(uint8_t note) {
-  int y = noteToY(note);
-
   for (int i = 0; i < 239; i++) {
     noteDots[i] = noteDots[i+1];
   }
-  noteDots[239] = y;   // ★ Y座標を入れる
+  noteDots[239] = note;
 }
 
-// ---- Main Track (メインノート専用) ----
-uint8_t lastNoteMain = 0;
-bool noteIsOnMain = false;
-unsigned long noteOffTimeMain = 0;
+// ---- Track A ----
+uint8_t lastNoteA = 0;
+bool noteIsOnA = false;
+unsigned long noteOffTimeA = 0;
 
 void drawTopText() {
     static int lastSteps = -1;
@@ -1222,13 +1190,13 @@ void drawTopText() {
     }
 
     // --- Note 表示 ---
-    if (lastNoteMain  != lastNote) {
+    if (lastNoteA != lastNote) {
         lcdFillRect(180, 0, 60, 15, COLOR_BLACK);
 
-        sprintf(buf, "Note:%s", getNoteName(lastNoteMain ));
+        sprintf(buf, "Note:%s", getNoteName(lastNoteA));
         lcdPrint(180, 5, buf, COLOR_CYAN, COLOR_BLACK, 1);
 
-        lastNote = lastNoteMain ;
+        lastNote = lastNoteA;
     }
 
     // --- Probability 情報 ---
@@ -1340,12 +1308,13 @@ uint8_t generateNoteB() {
 
     const uint8_t* sc;
 
-    if (scaleMode == 0) sc = SCALE_HEI;
-    else if (scaleMode == 1) sc = SCALE_MIYA;
-    else sc = SCALE_INSEN;
+    // 今は平調子固定ならこれでOK
+    sc = SCALE_HEI;
 
-    int baseOct = 48;  // C3（低音）
-    return baseOct + transpose + sc[0];  // ルートのみ
+    // ★ 5度（スケール index=3）
+    uint8_t fifth = 60 + transpose - 24 + sc[3];
+
+    return fifth;
 }
 
 
@@ -1414,9 +1383,9 @@ void handleCC(byte cc, byte value) {
         isPlaying = false;
 
         // STOP 時に音を止める
-        if (noteIsOnMain) {
-            sendNoteOffCh(lastNoteMain , 0);
-            noteIsOnMain = false;
+        if (noteIsOnA) {
+            sendNoteOffCh(lastNoteA, 0);
+            noteIsOnA = false;
         }
 
     }
@@ -1548,6 +1517,94 @@ int snapToHeichoshi(int raw, int transpose) {
     return (raw - pitch) + best;
 }
 
+uint8_t generateArpStep() {
+
+    // ---- スケール選択 ----
+    const uint8_t* sc;
+    int scSize;
+
+    if (scaleMode == 0) { sc = SCALE_HEI;   scSize = SCALE_HEI_SIZE; }
+    else if (scaleMode == 1) { sc = SCALE_MIYA;  scSize = SCALE_MIYA_SIZE; }
+    else { sc = SCALE_INSEN; scSize = SCALE_INSEN_SIZE; }
+
+    // ---- 現在の音のスケール内インデックス ----
+    int base = lastNoteA % 12;
+    int octave = lastNoteA / 12;
+
+    int idx = 0;
+    int bestDist = 99;
+    for (int i = 0; i < scSize; i++) {
+        int d = abs(base - sc[i]);
+        if (d < bestDist) {
+            bestDist = d;
+            idx = i;
+        }
+    }
+
+    // ---- スケールごとの方向設定 ----
+    int dirSetting = arpDirTable[scaleMode];
+
+    if (dirSetting == 1)       arpGoingUp = true;          // 平調子 → 上昇固定
+    else if (dirSetting == -1) arpGoingUp = false;         // 都節 → 下降固定
+    else                       arpGoingUp = (random(0,2)==0); // 陰旋法 → ランダム
+
+    // ---- 跳躍幅（度数ジャンプ）----
+    int jump = random(1, arpWidthTable[scaleMode] + 1);
+
+    // ---- 上昇 or 下降（度数ベース）----
+    if (arpGoingUp) {
+        idx += jump;
+        while (idx >= scSize) {
+            idx -= scSize;
+            octave++;
+        }
+    } else {
+        idx -= jump;
+        while (idx < 0) {
+            idx += scSize;
+            octave--;
+        }
+    }
+
+    uint8_t next = octave * 12 + sc[idx];
+
+    // ---- ★ 最高音連打防止：上限に達したら1オクターブ下へ戻す ----
+    if (scaleMode == 0 && arpGoingUp) {  // 平調子のみ
+        if (next >= 84) {
+            octave -= 1;                 // 1オクターブ下げる
+            next = octave * 12 + sc[idx];
+        }
+    }
+    // ---- ★ 最低音連打防止：下限に達したら1オクターブ上へ戻す ----
+    if (scaleMode == 0 && !arpGoingUp) {   // 平調子 & 下降時
+        if (next <= 24) {                  // 下限（例：C1）
+           octave += 1;                   // 1オクターブ上げる
+           next = octave * 12 + sc[idx];
+        }
+    }
+    
+    // ---- ★ 再低音に到達した瞬間：キーをリセット ----
+    if (!arpGoingUp && degreeArp <= 0) {
+
+        // ★ 好きな基準キーに戻す（例：0 = 原点）
+        transpose = 0;
+
+        // ★ degree も安全にリセット
+        degreeA   = 0;
+        degreeArp = 0;
+
+        // ★ 次は上昇に転じる（自然な動き）
+        arpGoingUp = true;
+    }
+
+    // ---- 音域制限 ----
+    //if (next < 48) next = 48;
+    //if (next > 84) next = 84;
+
+    return next;
+}
+
+
 unsigned long silenceLength = 0;
 
 void randomizeMainPattern() {
@@ -1596,12 +1653,17 @@ void sendAllNotesOff() {
 }
 
 void safeNoteOffA() {
-    if (noteIsOnMain) {
-        sendNoteOffCh(lastNoteMain, 0);
-        noteIsOnMain = false;
+    if (noteIsOnA) {
+        sendNoteOffCh(lastNoteA, 0);
+        noteIsOnA = false;
+    }
+    if (arpNoteOn) {
+        sendNoteOffCh(arpLastNote, 0);
+        arpNoteOn = false;
     }
 }
 
+bool firstArp = false;   // ★ 起動直後フラグ
 int mainDegree = 8;
 bool mainGoingDown = true;
 
@@ -1642,17 +1704,8 @@ int findNearestDegree(uint8_t note, const uint8_t* sc, int scSize, int transpose
 void drawSplash() {
     lcdFill(COLOR_BLACK);
     lcdPrint(65, 100, "KOSMOS", COLOR_WHITE, COLOR_BLACK, 3);
-    lcdPrint(100, 135, "v1.3.1", COLOR_DARK_GRAY, COLOR_BLACK, 1);
-    delay(10000);
-}
-
-void playStartupArp() {
-    uint8_t notes[3] = { 52, 60, 69 }; // E3, C4, A4
-    for (int i = 0; i < 3; i++) {
-        midi_bridge_send_note_on(notes[i], 100, 0);
-        delay(180);
-        midi_bridge_send_note_off(notes[i], 0);
-    }
+    lcdPrint(95, 135, "v1.3.0", COLOR_DARK_GRAY, COLOR_BLACK, 1);
+    delay(3000);
 }
 
 void setup() {
@@ -1676,14 +1729,21 @@ void setup() {
   for (int i = 0; i < 16; i++) prob[i] = 100;
 
   executeRandom();
+  nextArpEventTime = millis() + random(10000, 20000);
   transpose += 5;
   
   // ---- 起動時アルペジオ初期化（美しい低音スタート） ----
   int baseDegree = SCALE_HEI[0];   // 平調子の最も低い度数（D）
   int baseOct = 6;                 // C6
 
-  lastNoteMain = baseOct * 12 + baseDegree + transpose;
+  lastNoteA = baseOct * 12 + baseDegree + transpose;
 
+  // アルペジオもこの基準音から開始
+  arpGoingUp = true;               // 平調子は上昇固定
+
+  nextArpStepTime = millis() + 50; // すぐ鳴らす
+
+  lastArpActivity = millis();
   nextSilenceTime = millis() + 2500;
 
   randomizeMainPattern();
@@ -1699,12 +1759,22 @@ void setup() {
 
   executeRandom();      // 平調子の密度・確率でパターン生成
 
-  nextMainSilenceTime = millis() + random(8000, 15000);  // 8〜15秒後
+  nextMainSilenceTime = millis() + random(40000, 60000);  // 40〜60秒後
   
+  firstArp = true;
+  arpEventActive = false;
+  arpStartPending = false;
+  arpEndPending = false;
+  arpEventCount = 0;
+  arpRepeatCount = 0;
+  // ★ 起動時アルペジオを長くする（特別モード）
+  arpRepeatTarget = random(80, 140);   // ← 長さの本体（80〜140回の反転）
+  arpFlipWidth    = random(4, 9);      // ← 1方向の音数を増やす（4〜8音）
+  arpGoingUp      = true;              // ← 起動時は上昇から始めると美しい
+  nextArpEventTime = millis() + 10;    // 起動直後すぐアルペジオ開始
+
   drawAllStepBars();
-
-  for (int i = 0; i < 240; i++) noteDots[i] = -1;
-
+ 
   // ★★★ Core0 の初期化が全部終わってから Core1 を起動する ★★★
   multicore_launch_core1(core1_main);
 
@@ -1717,260 +1787,72 @@ void setup() {
 bool forceMainStep = false;
 bool arpWantsToEnd = false;   // ★ 終了希望フラグ（実際にはまだ終わらない）
 
-struct ArpEngine {
-    bool active = false;
-
-    uint8_t baseNote = 60;
-    int scaleMode = 0;
-
-    int currentDegree = 0;
-    int octave = 0;
-
-    bool arpGoingUp = true;     // ★ 上昇フェーズか下降フェーズか
-    int remainingUpSteps = 0;   // ★ 上昇の残りステップ
-    int remainingDownSteps = 0; // ★ 下降の残りステップ
-
-    uint32_t nextStepMs = 0;
-
-    // ★ 上昇・下降でスピードを変える
-    uint32_t upIntervalMs = 80;     // 上昇スピード
-    uint32_t downIntervalMs = 120;  // 下降スピード
-
-    bool noteOn = false;
-    uint8_t lastNote = 0;
-
-    bool stopOnUp = false;
-    bool stopOnDown = false;
-};
-
-ArpEngine g_arp;
-
-const uint8_t* getScale(int mode, int &size) {
-    if (mode == 0) { size = SCALE_HEI_SIZE;   return SCALE_HEI; }
-    if (mode == 1) { size = SCALE_MIYA_SIZE;  return SCALE_MIYA; }
-    size = SCALE_INSEN_SIZE; return SCALE_INSEN;
-}
-
-void arp_start(uint8_t baseNote, int scaleMode, int bpm) {
-    g_arp.active = true;
-    g_arp.baseNote = baseNote;
-    g_arp.scaleMode = scaleMode;
-
-    int scSize;
-    getScale(scaleMode, scSize);
-
-    // ★ 開始は必ず上昇
-    g_arp.arpGoingUp = true;
-
-    // ★ 上昇は低めから
-    g_arp.currentDegree = 0;
-    g_arp.octave = 0;
-
-    // ★ 長さ候補
-    const int lengthChoices[] = {4, 8};
-    const int lengthCount = 2;
-
-    // ★ 上昇・下降の長さを候補からランダム選択
-    g_arp.remainingUpSteps   = lengthChoices[random(0, lengthCount)];
-    //g_arp.remainingDownSteps = lengthChoices[random(0, lengthCount)];
-    g_arp.remainingDownSteps = random(24, 48);
-
-
-    // ★ 停止は「下降が終わったときだけ」
-    g_arp.stopOnUp = false;                 // 上昇では絶対止まらない
-    g_arp.stopOnDown = true;
-
-    // 基本スピード
-    uint32_t baseUp   = 60000UL / bpm / 8;  // 上昇
-    uint32_t baseDown = 60000UL / bpm / 8;  // 下降
-
-    // ランダム倍率（0.7〜1.3倍）
-    float upMul   = random(70, 130) / 100.0f;
-    float downMul = random(70, 130) / 100.0f;
-
-    g_arp.upIntervalMs   = baseUp   * upMul;
-    g_arp.downIntervalMs = baseDown * downMul;
-}
-
-void arp_stop() {
-    if (g_arp.noteOn) {
-        midi_bridge_send_note_off(g_arp.lastNote, 0);
-        g_arp.noteOn = false;
-    }
-    g_arp.active = false;
-}
-
-void arp_update(uint32_t nowMs) {
-    if (!g_arp.active) return;
-    if (nowMs < g_arp.nextStepMs) return;
-
-    // 前のノートを切る
-    if (g_arp.noteOn) {
-        midi_bridge_send_note_off(g_arp.lastNote, 0);
-        g_arp.noteOn = false;
-    }
-
-    int scSize;
-    const uint8_t* sc = getScale(g_arp.scaleMode, scSize);
-
-    // ★ ノート決定（共通）
-    uint8_t note = g_arp.baseNote + g_arp.octave * 12 + sc[g_arp.currentDegree];
-    midi_bridge_send_note_on(note, 90, 0);
-
-    g_arp.lastNote = note;
-    g_arp.noteOn = true;
-
-    // =====================================================
-    // ★ 上昇フェーズ
-    // =====================================================
-    if (g_arp.arpGoingUp) {
-
-        int up = random(1, 3);  // 1〜2音上昇
-        g_arp.currentDegree += up;
-
-        // スケール上端処理
-        if (g_arp.currentDegree >= scSize) {
-            g_arp.currentDegree -= scSize;
-            g_arp.octave++;
-        }
-
-        g_arp.remainingUpSteps--;
-        if (g_arp.remainingUpSteps <= 0) {
-
-            // ★ 上昇では絶対に止めない
-            // → 下降へ切り替え
-            g_arp.arpGoingUp = false;
-            g_arp.currentDegree = scSize - 1;
-
-            g_arp.nextStepMs = nowMs + g_arp.downIntervalMs;
-            return;
-        }
-
-        g_arp.nextStepMs = nowMs + g_arp.upIntervalMs;
-        return;
-    }
-
-    // =====================================================
-    // ★ 下降フェーズ
-    // =====================================================
-    //int drop = random(1, 3);  // 1〜2音下降（安定・自然・音数が増える）
-    int drop = random(1, 3);  // 1〜2音下降（安定・自然・音数が増える）
-
-    g_arp.currentDegree -= drop;
-
-    // スケール下端処理
-    if (g_arp.currentDegree < 0) {
-        g_arp.currentDegree = scSize - 1;
-        g_arp.octave--;
-
-        if (g_arp.octave < 0) {
-            arp_stop();
-            return;
-        }
-    }
-
-    g_arp.remainingDownSteps--;
-    if (g_arp.remainingDownSteps <= 0) {
-
-        // ★ 下降後だけ停止判定
-        if (g_arp.stopOnDown) {
-            arp_stop();
-            return;
-        }
-
-        // ★ 停止しない → 上昇へ戻る
-        g_arp.arpGoingUp = true;
-        g_arp.currentDegree = 0;
-        g_arp.octave = random(0, 2);
-        g_arp.remainingUpSteps = random(6, 20);
-
-        g_arp.nextStepMs = nowMs + g_arp.upIntervalMs;
-        return;
-    }
-
-    // 通常下降の次ステップ
-    g_arp.nextStepMs = nowMs + g_arp.downIntervalMs;
-}
-
-
-// ★ アルペジオ頻度アップ用
-unsigned long nextArpChanceTime = 0;
-
 void loop() {
-    static unsigned long lastFrame = 0;
-    unsigned long now_us = micros();
-    if (now_us - lastFrame < 300) return;
-    lastFrame = now_us;
-
-    uint32_t now = millis();
-    if (interval < 10) interval = 10;
+    unsigned long now = millis();
 
     // =====================================================
-    // NoteOff（メイン / B）
+    // ★ NoteOff（A / B / Arp）をここにまとめて置く
     // =====================================================
-    if (noteIsOnMain && now >= noteOffTimeMain) {
-        midi_bridge_send_note_off(lastNoteMain, 0);
-        noteIsOnMain = false;
+
+    // ---- A（メイン） ----
+    if (noteIsOnA && now >= noteOffTimeA) {
+        midi_bridge_send_note_off(lastNoteA, 0);
+        noteIsOnA = false;
     }
+
+    // ---- B（今回追加した ch2）----
     if (noteIsOnB && now >= noteOffTimeB) {
         midi_bridge_send_note_off(lastNoteB, 1);
         noteIsOnB = false;
     }
 
+    // ---- Arp（アルペジオ）----
+    if (arpNoteOn && now >= arpNoteOffTime) {
+        midi_bridge_send_note_off(arpLastNote, 0);
+        arpNoteOn = false;
+    }
+
     // =====================================================
-    // メインサイレンス制御（開始）
+    // 1. メインパターン完全サイレンス
     // =====================================================
     if (!mainSilenceActive && now >= nextMainSilenceTime) {
         mainSilenceActive = true;
-
-        // メインを無音化
         for (int i = 0; i < 16; i++) mainPattern[i] = 0;
-
-        // メイン音を強制停止
-        if (noteIsOnMain) {
-            midi_bridge_send_note_off(lastNoteMain, 0);
-            noteIsOnMain = false;
-        }
-
-        // B パートも強制停止
-        if (noteIsOnB) {
-            midi_bridge_send_note_off(lastNoteB, 1);
-            noteIsOnB = false;
-        }
-
-        // アルペジオも強制停止
-        if (g_arp.active) {
-            arp_stop();
-        }
-
         mainSilenceDuration = now + random(5000, 8000);
     }
 
-    // =====================================================
-    // メインサイレンス制御（終了）
-    // =====================================================
     if (mainSilenceActive && now >= mainSilenceDuration) {
         mainSilenceActive = false;
-
-        // B パターンを復活
-        currentBPattern = 0;
-
-        arp_start(60 + transpose, scaleMode, stepBPM);
+        arpStartPending = true;
         executeRandom();
-        nextMainSilenceTime = now + random(30000, 50000);
+        nextMainSilenceTime = now + random(40000, 60000);
+    }
+
+    if (mainSilenceActive) {
+        arpStartPending = false;
+        if (arpEventActive) {
+            if (arpNoteOn) {
+                sendNoteOffCh(arpLastNote, 0);
+                arpNoteOn = false;
+            }
+            arpEventActive = false;
+        }
     }
 
     // =====================================================
-    // 入力
+    // 2. 入力
     // =====================================================
     readButtons();
-    readJoystick();
+    //readJoystick();
 
     // =====================================================
-    // 呼吸 BPM / 自動トランスポーズ
+    // 3. 呼吸 BPM
     // =====================================================
     stepBPM = baseBPM;
 
+    // =====================================================
+    // 4. 自動トランスポーズ
+    // =====================================================
     static unsigned long nextTransposeTime = millis() + random(5000, 15000);
     if (now >= nextTransposeTime) {
         int d = (rand() % 2 == 0) ? +5 : -5;
@@ -1981,18 +1863,85 @@ void loop() {
     }
 
     // =====================================================
-    // ランダムでアルペジオを挿入
+    // 5. BPM 微揺れ
     // =====================================================
-    if (!g_arp.active && now >= nextArpChanceTime) {
-        nextArpChanceTime = now + random(8000, 12000);
-        if (!g_arp.active) {
-            uint8_t base = 60 + transpose;
-            arp_start(base, scaleMode, stepBPM);
+    static unsigned long lastBpmChange = 0;
+    if (now - lastBpmChange > 500) {
+        lastBpmChange = now;
+        int d = random(-2, 3);
+        stepBPM = max(30, baseBPM + d);
+    }
+
+    // =====================================================
+    // 6. アルペジオイベント開始
+    // =====================================================
+    if (!arpEventActive && !arpEndPending) {
+        if (now >= nextArpEventTime) {
+            arpStartPending = true;
         }
     }
 
     // =====================================================
-    // モード切替
+    // 7. アルペジオ中
+    // =====================================================
+    if (arpEventActive) {
+        // ★ ここに置く（最重要）
+        if (arpWantsToEnd) {
+            nextArpStepTime = ULONG_MAX;   // 最後の noteOn を完全に禁止
+        }
+        
+        if (arpEndPending) {
+            if (arpNoteOn) {
+                sendNoteOffCh(arpLastNote, 0);
+                arpNoteOn = false;
+            }
+            arpEventActive = false;
+
+            // ★ ここで即メインへ吸着（8分ステップを待たない）
+            forceMainStep = true;
+
+            return;
+        } else {
+            unsigned long interval = 60000UL / max(stepBPM, 30) / 4;
+            unsigned long arpInterval = interval / 2;   // ← これが最も自然
+            
+            if (nextArpStepTime > now + 300)
+                nextArpStepTime = now + 10;
+
+            if (now >= nextArpStepTime) {
+
+                safeNoteOffA();
+
+                uint8_t note = generateArpStep();
+                int arpVel = arpGoingUp ?
+                    85 + random(-10, 15) :
+                    75 + random(-15, 10);
+
+                sendNoteOnCh(note, arpVel, 0);
+
+                lastNoteA = note;
+                noteIsOnA = true;
+
+                nextArpStepTime = now + arpInterval;
+
+                arpEventCount++;
+
+                if (arpEventCount >= arpFlipWidth) {
+                    arpEventCount = 0;
+                    arpGoingUp = !arpGoingUp;
+                    arpRepeatCount++;
+
+                    if (arpRepeatCount >= arpRepeatTarget) {
+                        // ここで直接 arpEndPending にしない
+                        arpWantsToEnd = true;   // ★ まずは「終わりたい」だけ
+                    }
+                }
+            }
+        }
+    }
+
+    // =====================================================
+    // 8. モード切替（滑らか版）
     // =====================================================
     static int pendingScale = -1;
     static int pendingRandom = -1;
@@ -2004,7 +1953,7 @@ void loop() {
         drawRandomMode();
     }
 
-    if (!g_arp.active) {
+    if (!arpEventActive) {
         if (pendingRandom != -1) {
             randomMode = pendingRandom;
             pendingRandom = -1;
@@ -2017,113 +1966,217 @@ void loop() {
     }
 
     // =====================================================
-    // メインステップ（8分 × 16）
+    // ★ ch2（noteB）: rhythmPatterns に従って鳴く
+    // =====================================================
+    if (rhythmPatterns[currentPattern][currentStep] == 1) {
+
+        // ルート固定
+        uint8_t noteB = 48;  // 好きなルートに変更可
+
+        // ベロシティは少し揺らすと自然
+        int velB = 70 + random(-10, 10);
+
+        // ノートオン
+        midi_bridge_send_note_on(noteB, velB, 1);
+        noteIsOnB = true;
+        lastNoteB = noteB;
+
+        // ノートオフ予約（短め）
+        noteOffTimeB = now + (interval * 0.85);
+
+    } else {
+        // 休符 → ノートオフ
+        if (noteIsOnB) {
+            midi_bridge_send_note_off(lastNoteB, 1);
+            noteIsOnB = false;
+        }
+    }
+
+    // =====================================================
+    // 9. メインステップ（8分 × 16）
     // =====================================================
     interval = 60000UL / max(stepBPM, 30) / 4;
 
-    if (now - lastMainStepTime >= interval) {
+    // ★ forceMainStep（ここに挿入）
+    if (forceMainStep) {
+        forceMainStep = false;
+
         lastMainStepTime = now;
         currentStep = (currentStep + 1) % 16;
 
-        // B パターン更新（無音中は変えない）
-        if (!mainSilenceActive && currentStep == 0) {
-            currentBPattern = 0;
+        if (noteIsOnA && now >= noteOffTimeA) {
+            safeNoteOffA();
         }
 
-        // メインパターン更新（無音中は上書きしない）
-        if (!mainSilenceActive) {
-            currentPattern = random(0, 5);
-            memcpy(mainPattern, rhythmPatterns[currentPattern], sizeof(mainPattern));
+        if (mainPattern[currentStep] == 1) {
+
+            const uint8_t* sc;
+            int scSize;
+            if (scaleMode == 0) { sc = SCALE_HEI; scSize = SCALE_HEI_SIZE; }
+            else if (scaleMode == 1) { sc = SCALE_MIYA; scSize = SCALE_MIYA_SIZE; }
+            else { sc = SCALE_INSEN; scSize = SCALE_INSEN_SIZE; }
+
+            uint8_t bridged = mapToScale(lastNoteA, sc, scSize);
+
+            int deg = findNearestDegree(bridged, sc, scSize, transpose);
+
+            deg += (arpGoingUp ? +1 : -1);
+            deg = constrain(deg, 0, scSize - 1);
+
+            mainDegree = deg;
+
+            uint8_t noteA = 60 + transpose + sc[deg];
+
+            safeNoteOffA();
+
+            int velA = map(stepBPM, 30, 140, 70, 120) + random(-10, 10);
+            sendNoteOnCh(noteA, velA, 0);
+
+            lastNoteA = noteA;
+            noteIsOnA = true;
+            noteOffTimeA = now + (interval * 0.85);
+
+            pushNoteDot(noteA);
+            drawNoteDots();
+
+        } else {
+            if (noteIsOnA) safeNoteOffA();
         }
 
-        // ★ アルペジオ中はメインを鳴らさない
-        if (!g_arp.active) {
+        updateStepBars();
+        updateStepDots();
+        drawTopText();
 
-            // NoteOff
-            if (noteIsOnMain && now >= noteOffTimeMain) {
-                midi_bridge_send_note_off(lastNoteMain, 0);
-                noteIsOnMain = false;
+        return;
+    }
+
+    if (now - lastMainStepTime >= interval) {
+
+        lastMainStepTime = now;
+        currentStep = (currentStep + 1) % 16;
+
+        // ★ 8分の頭でだけ「本当に終わっていい」ことにする
+        if (arpWantsToEnd && arpEventActive) {
+            arpEndPending = true;
+            arpWantsToEnd = false;
+        }
+
+        // ★ リズムパターンを切り替える
+        currentPattern = random(0, 5);
+        memcpy(mainPattern, rhythmPatterns[currentPattern], sizeof(mainPattern));
+
+        // ★ アルペジオ終了処理（吸着ポイント）
+        if (arpEndPending) {
+
+            if (arpNoteOn) {
+                sendNoteOffCh(arpLastNote, 0);
+                arpNoteOn = false;
             }
 
-            // ★ パターン × 発音率（density）
-            bool shouldPlay =
-                (!mainSilenceActive) &&
-                (mainPattern[currentStep] == 1) &&
-                (random(0, 100) < mainDensity);
+            arpEventActive  = false;
+            arpEndPending   = false;
+            arpStartPending = false;
 
-            if (shouldPlay) {
+            nextArpEventTime = millis() + random(5000, 10000);
 
-                // 上昇下降の動き
-                if (mainGoingDown) {
-                    mainDegree--;
-                    if (mainDegree <= 0) {
-                        mainDegree = 0;
-                        mainGoingDown = false;
-                    }
-                } else {
-                    mainDegree++;
-                    if (mainDegree >= 8) {
-                        mainDegree = 8;
-                        mainGoingDown = true;
-                    }
-                }
+            // ★ メインへ即吸着（forceMainStep へ）
+            forceMainStep = true;
+            return;
+        }
 
-                // スケール取得
-                const uint8_t* sc;
-                int scSize;
-                if (scaleMode == 0) { sc = SCALE_HEI;   scSize = SCALE_HEI_SIZE; }
-                else if (scaleMode == 1) { sc = SCALE_MIYA;  scSize = SCALE_MIYA_SIZE; }
-                else { sc = SCALE_INSEN; scSize = SCALE_INSEN_SIZE; }
+        // ---- アルペジオ開始 ----
+        if (arpStartPending && !arpEventActive) {
 
-                int idx = mainDegree % scSize;
-                uint8_t noteA = 60 + transpose + sc[idx];
+            arpStartPending = false;
 
-                int velA = map(stepBPM, 30, 140, 70, 120) + random(-10, 10);
-                midi_bridge_send_note_on(noteA, velA, 0);
+            arpEventActive  = true;
+            arpEventCount   = 0;
+            arpRepeatCount  = 0;
 
-                lastNoteMain = noteA;
-                noteIsOnMain = true;
-                noteOffTimeMain = now + (interval * 0.85);
-
-                pushNoteDot(noteA);
-                drawNoteDots();
-
+            if (firstArp) {
+                arpRepeatTarget = random(10, 15);
+                arpFlipWidth    = random(3, 5);
+                firstArp = false;
             } else {
-                // 鳴らさないときは noteOff
-                if (noteIsOnMain) {
-                    midi_bridge_send_note_off(lastNoteMain, 0);
-                    noteIsOnMain = false;
-                }
+                arpRepeatTarget = arpLengthTable[scaleMode];
+                arpFlipWidth    = random(2, 5);
             }
+
+            degreeA = 0;
+            dirA    = 1;
+
+            arpGoingUp = (rand() % 100 < 60);
+
+            nextArpStepTime = now + 10;
         }
 
+        // ---- アルペジオ中はメインを鳴かない ----
+        if (arpEventActive) {
+            updateStepBars();
+            updateStepDots();
+            drawTopText();
+            return;
+        }
 
-        // =================================================
-        // B パート（無音中は鳴らさない）
-        // =================================================
-        if (!mainSilenceActive) {
-            if (rhythmBPatterns[currentBPattern][currentStep] == 1) {
-                uint8_t noteB = generateNoteB();
-                if (noteIsOnB) midi_bridge_send_note_off(lastNoteB, 1);
-                midi_bridge_send_note_on(noteB, 90, 1);
-                lastNoteB = noteB;
-                noteIsOnB = true;
-                noteOffTimeB = now + (interval * 1.8);
+        // ---- メインノート ----
+        if (noteIsOnA && now >= noteOffTimeA) {
+            safeNoteOffA();
+        }
+
+        if (mainPattern[currentStep] == 1) {
+
+            // ★ mainDegree の上下運動（ここが正しい場所）
+            //static int  mainDegree     = 8;
+            //static bool mainGoingDown  = true;
+
+            if (mainGoingDown) {
+                mainDegree--;
+                if (mainDegree <= 0) {
+                    mainDegree = 0;
+                    mainGoingDown = false;
+                }
+            } else {
+                mainDegree++;
+                if (mainDegree >= 8) {
+                    mainDegree = 8;
+                    mainGoingDown = true;
+                }
             }
+
+            // ★ スケール選択
+            const uint8_t* sc;
+            int scSize;
+            if (scaleMode == 0) { sc = SCALE_HEI;   scSize = SCALE_HEI_SIZE; }
+            else if (scaleMode == 1) { sc = SCALE_MIYA;  scSize = SCALE_MIYA_SIZE; }
+            else { sc = SCALE_INSEN; scSize = SCALE_INSEN_SIZE; }
+
+            // ★ degree → note
+            int idx = mainDegree % scSize;
+            uint8_t noteA = 60 + transpose + sc[idx];
+
+            safeNoteOffA();
+
+            int velA = map(stepBPM, 30, 140, 70, 120) + random(-10, 10);
+            sendNoteOnCh(noteA, velA, 0);
+
+            lastNoteA = noteA;
+            noteIsOnA = true;
+            noteOffTimeA = now + (interval * 0.85);
+
+            pushNoteDot(noteA);
+            drawNoteDots();
+
+        } else {
+            if (noteIsOnA) safeNoteOffA();
         }
 
         updateStepBars();
         updateStepDots();
         drawTopText();
     }
-
+    
     // =====================================================
-    // アルペジオ更新
-    // =====================================================
-    arp_update(now);
-
-    // =====================================================
-    // UI
+    // 10. UI
     // =====================================================
     static uint32_t lastUI = 0;
     if (now - lastUI >= 16) {
