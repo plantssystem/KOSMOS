@@ -14,9 +14,6 @@ bool core1_separate_stack = true;
 #define PRA32_U_I2S_DAC_MUTE_OFF_PIN (22)
 
 // Waveshare Pico-Audio:
-// DIN  = GP26
-// BCK  = GP27
-// LRCK = GP28
 #define PRA32_U_I2S_DATA_PIN  (26)  // DIN
 #define PRA32_U_I2S_BCLK_PIN  (27)  // BCK
 #define PRA32_U_I2S_LRCLK_PIN (28)  // LRCK
