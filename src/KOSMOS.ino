@@ -14,6 +14,9 @@ bool core1_separate_stack = true;
 #define PRA32_U_I2S_DAC_MUTE_OFF_PIN (22)
 
 // Waveshare Pico-Audio:
+// DIN  = GP26
+// BCK  = GP27
+// LRCK = GP28
 #define PRA32_U_I2S_DATA_PIN  (26)  // DIN
 #define PRA32_U_I2S_BCLK_PIN  (27)  // BCK
 #define PRA32_U_I2S_LRCLK_PIN (28)  // LRCK
@@ -299,6 +302,9 @@ int bpmIndex = 1; // 初期値 80BPM（TABLE[1])
 
 int transpose = 3;   // -24〜+24 くらいまで対応（2オクターブ）
 
+const int TRANSPOSE_LIST[] = { -10, -5, -4, 0, +4, +5, +10 };
+const int TRANSPOSE_COUNT = 7;
+
 // 8分 × 16 のリズムパターン
 int rhythmPatterns[5][16] = {
     // パターン0：全打ち（基礎）
@@ -347,6 +353,10 @@ bool noteIsOnB = false;
 uint8_t lastNoteB = 0;
 unsigned long noteOffTimeB = 0;
 
+bool noteIsOnMain = false;
+uint8_t lastNoteMain = 0;
+unsigned long noteOffTimeMain = 0;
+
 // ★ 8分ステップ管理
 unsigned long lastStep = 0;
 // ★ 8分の長さ（BPM から計算）
@@ -361,8 +371,12 @@ unsigned long nextSilenceTime = 0;
 int mainPattern[16];   // 0 = 休符, 1 = 鳴く
 bool pendingPatternChange = false;
 
+uint16_t bpmColor = COLOR_GREEN;   // Start時は白、Stop時は赤
+
+unsigned long lastClockMicros = 0;
+
 // ---- スケール定義（度数） ----
-const uint8_t SCALE_HEI[]   = { 0, 1, 5, 7, 8  };   // 平調子(D, Eb, F, G, Bb)
+const uint8_t SCALE_HEI[]   = { 0, 2, 4, 7, 9 };   // 平調子（ヨナ抜き長音階）
 const uint8_t SCALE_MIYA[]  = { 0, 1, 5, 7, 10 };   // 都節（C/Db/F/G/Bb）
 const uint8_t SCALE_INSEN[] = { 0, 1, 5, 7, 8 };    // 陰旋法（C/Db/F/G/Ab）
 
@@ -437,6 +451,15 @@ int noteToY(uint8_t note) {
     return map(note, 36, 84, 240, 150);  // 下が低音、上が高音
 }
 
+int muteState = 0;  
+// 0 = A mute
+// 1 = B mute
+// 2 = ALL mute
+// 3 = A unmute
+// 4 = B unmute
+bool muteA = false;
+bool muteB = false;
+
 // ---- 音色番号（LCD表示用）----
 int programA = 11;   // ch1 初期音色
 int programB = 8;    // ch2 初期音色
@@ -455,6 +478,8 @@ unsigned long lastStepB = 0;   // ← 外に出す（重要）
 bool lastX = false;
 unsigned long pressStartX = 0;
 unsigned long lastStepX = 0;
+
+bool isPlaying = false;
 
 // ============================================================
 // ★ Yボタン（リズムパターン切替）
@@ -483,21 +508,9 @@ void readButtons() {
     if (!nowA && lastAState) {
         unsigned long dur = millis() - pressStartA;
         if (dur < 300) {
-            programA = random(0, 16);
+            programA = (programA + 1) % 16;
             midi_bridge_send_cc(100, programA, 0);
             drawProgramInfo();
-        }
-    }
-
-    if (nowA && lastAState) {
-        unsigned long dur = millis() - pressStartA;
-        if (dur >= 300) {
-            if (millis() - lastStepA >= 200) {
-                lastStepA = millis();
-                programA = (programA + 1) % 16;
-                midi_bridge_send_cc(100, programA, 0);
-                drawProgramInfo();
-            }
         }
     }
 
@@ -512,26 +525,35 @@ void readButtons() {
     if (!nowB && lastBState) {
         unsigned long dur = millis() - pressStartB;
         if (dur < 300) {
-            programB = random(0, 16);
+            programB = (programB + 1) % 16;
             midi_bridge_send_cc(100, programB, 1);
             drawProgramInfo();
         }
     }
 
-    if (nowB && lastBState) {
-        unsigned long dur = millis() - pressStartB;
-        if (dur >= 300) {
-            if (millis() - lastStepB >= 200) {
-                lastStepB = millis();
-                programB = (programB + 1) % 16;
-                midi_bridge_send_cc(100, programB, 1);
-                drawProgramInfo();
-            }
+    // ============================================================
+    // ★ A + B 同時押し → MIDI Start / Stop
+    // ============================================================
+
+    if (nowA && nowB && (!lastAState || !lastBState)) {
+
+        if (!isPlaying) {
+            // ★ 再生開始
+            usb_midi.write(0xFA);   // MIDI Start
+            isPlaying = true;
+            bpmColor = COLOR_WHITE;   // ★ Start → 白
+            drawTopText();
+        } else {
+            // ★ 停止
+            usb_midi.write(0xFC);   // MIDI Stop
+            isPlaying = false;
+            bpmColor = COLOR_RED;   // ★ End → 赤
+            drawTopText();
         }
     }
 
     // ============================================================
-    // ★ X ボタン（リズムパターン切替） ← 元Yの機能
+    // ★ X ボタン（ミュート切替）
     // ============================================================
 
     if (nowX && !lastX) {
@@ -541,25 +563,33 @@ void readButtons() {
     if (!nowX && lastX) {
         unsigned long dur = millis() - pressStartX;
         if (dur < 300) {
-            currentPattern = random(0, RHYTHM_PATTERN_COUNT);
-            memcpy(mainPattern,
-                   rhythmPatterns[currentPattern],
-                   sizeof(mainPattern));
-        }
-    }
 
-    if (nowX && lastX) {
-        unsigned long dur = millis() - pressStartX;
-        if (dur >= 300) {
-            if (millis() - lastStepX >= 200) {
-                lastStepX = millis();
-                currentPattern =
-                    (currentPattern + 1) % RHYTHM_PATTERN_COUNT;
+            muteState = (muteState + 1) % 5;
 
-                memcpy(mainPattern,
-                       rhythmPatterns[currentPattern],
-                       sizeof(mainPattern));
+            switch (muteState) {
+                case 0:  // A mute
+                    muteA = true;
+                    break;
+
+                case 1:  // B mute
+                    muteB = true;
+                    break;
+
+                case 2:  // ALL mute
+                    muteA = true;
+                    muteB = true;
+                    break;
+
+                case 3:  // A unmute
+                    muteA = false;
+                    break;
+
+                case 4:  // B unmute
+                    muteB = false;
+                    break;
             }
+
+            drawMuteStatus();  // LCD 表示
         }
     }
 
@@ -574,9 +604,18 @@ void readButtons() {
     if (!nowY && lastY) {
         unsigned long dur = millis() - pressStartY;
         if (dur < 300) {
-            bpmIndex = random(0, BPM_COUNT);
+            // ★ ランダムではなくインクリメント
+            bpmIndex = (bpmIndex + 1) % BPM_COUNT;
             baseBPM = BPM_TABLE[bpmIndex];
             drawTopText();
+
+            // ★ 追加：テンポ変更時に noteA を止める
+            if (noteIsOnMain) {
+                midi_bridge_send_note_off(lastNoteMain, 0);
+                noteIsOnMain = false;
+            }         
+            // ★ noteOffTimeMain をリセット（最重要）
+            noteOffTimeMain = 0;   
         }
     }
 
@@ -588,6 +627,13 @@ void readButtons() {
                 bpmIndex = (bpmIndex + 1) % BPM_COUNT;
                 baseBPM = BPM_TABLE[bpmIndex];
                 drawTopText();
+                // ★ 追加：テンポ変更時に noteA を止める
+                if (noteIsOnMain) {
+                    midi_bridge_send_note_off(lastNoteMain, 0);
+                    noteIsOnMain = false;
+                }            
+                // ★ noteOffTimeMain をリセット（最重要）
+                noteOffTimeMain = 0;   
             }
         }
     }
@@ -597,6 +643,36 @@ void readButtons() {
     lastBState = nowB;
     lastX = nowX;
     lastY = nowY;
+}
+
+void drawPlayIndicator(uint16_t color) {
+    // 左下に ● を描く
+    lcdFillRect(0, 220, 20, 20, COLOR_BLACK);  // 背景クリア
+    lcdPrint(5, 222, "●", color, COLOR_BLACK, 1);
+}
+
+void drawMuteStatus() {
+    lcdFillRect(130, 38, 240, 15, COLOR_BLACK);  // ← 安全地帯に移動
+
+    const char* msg =
+        (muteState == 0) ? "A MUTE" :
+        (muteState == 1) ? "B MUTE" :
+        (muteState == 2) ? "ALL MUTE" :
+        (muteState == 3) ? "A UNMUTE" :
+                           "B UNMUTE";
+
+    lcdPrint(130, 40, msg, COLOR_WHITE, COLOR_BLACK, 1);
+}
+
+void drawScaleName() {
+    lcdFillRect(0, 20, 240, 15, COLOR_BLACK);
+
+    const char* name =
+        (scaleMode == 0) ? "HEI" :
+        (scaleMode == 1) ? "MIYA" :
+                           "INSEN";
+
+    lcdPrint(5, 22, name, COLOR_WHITE, COLOR_BLACK, 1);
 }
 
 void drawProgramInfo() {
@@ -1168,7 +1244,9 @@ uint8_t generateNote() {
 
 uint8_t lastNote = 0;
 bool noteIsOn = false;
-unsigned long clockInterval = 0;
+
+unsigned long clockInterval = (60000UL / baseBPM) / 24;
+unsigned long lastClockTime = 0;
 
 void pushNoteDot(uint8_t note) {
   int y = noteToY(note);
@@ -1178,11 +1256,6 @@ void pushNoteDot(uint8_t note) {
   }
   noteDots[239] = y;   // ★ Y座標を入れる
 }
-
-// ---- Main Track (メインノート専用) ----
-uint8_t lastNoteMain = 0;
-bool noteIsOnMain = false;
-unsigned long noteOffTimeMain = 0;
 
 void drawTopText() {
     static int lastSteps = -1;
@@ -1241,13 +1314,17 @@ void drawTopText() {
 
     // --- BPM 表示 ---
     static int lastBPM = -1;
-    if (stepBPM != lastBPM) {
-         lcdFillRect(130, 20, 60, 20, COLOR_BLACK);  // BPM 表示エリアだけ消す
+    static uint16_t lastColor = 0xFFFF;
 
-         sprintf(buf, "BPM:%d", baseBPM);
-         lcdPrint(130, 25, buf, COLOR_GREEN, COLOR_BLACK, 1);
+    if (stepBPM != lastBPM || bpmColor != lastColor) {
+        lcdFillRect(130, 20, 60, 20, COLOR_BLACK);
 
-         lastBPM = stepBPM;
+        char buf[16];
+        sprintf(buf, "BPM:%d", stepBPM);
+        lcdPrint(130, 25, buf, bpmColor, COLOR_BLACK, 1);
+
+        lastBPM = stepBPM;
+        lastColor = bpmColor;
     }
 }
 
@@ -1381,7 +1458,6 @@ void drawEuclidParams() {
     lcdPrint(4, 4, buf, 0xFFFF, 0x0000, 1);
 }
 
-bool isPlaying = true;
 // ★ 小休止用
 unsigned long lastRest = 0;
 bool inRest = false;
@@ -1639,7 +1715,7 @@ int findNearestDegree(uint8_t note, const uint8_t* sc, int scSize, int transpose
 void drawSplash() {
     lcdFill(COLOR_BLACK);
     lcdPrint(65, 100, "KOSMOS", COLOR_WHITE, COLOR_BLACK, 3);
-    lcdPrint(100, 135, "v1.3.1", COLOR_DARK_GRAY, COLOR_BLACK, 1);
+    lcdPrint(100, 135, "v1.3.2", COLOR_DARK_GRAY, COLOR_BLACK, 1);
     delay(10000);
 }
 
@@ -1894,12 +1970,22 @@ void arp_update(uint32_t nowMs) {
 unsigned long nextArpChanceTime = 0;
 
 void loop() {
+    // ★ 超安定 MIDI Clock（24ppqn）
+    unsigned long nowMicros = micros();
+    unsigned long clockIntervalMicros = (60000000UL / baseBPM) / 24;
+
+    if (nowMicros - lastClockMicros >= clockIntervalMicros) {
+        lastClockMicros += clockIntervalMicros;  // ← これが最重要（揺れゼロ）
+        usb_midi.write(0xF8);  // MIDI Clock
+    }
+    
     static unsigned long lastFrame = 0;
     unsigned long now_us = micros();
     if (now_us - lastFrame < 300) return;
     lastFrame = now_us;
 
     uint32_t now = millis();
+
     if (interval < 10) interval = 10;
 
     // =====================================================
@@ -1970,9 +2056,11 @@ void loop() {
 
     static unsigned long nextTransposeTime = millis() + random(5000, 15000);
     if (now >= nextTransposeTime) {
-        int d = (rand() % 2 == 0) ? +5 : -5;
-        transpose += d;
-        transpose = constrain(transpose, -10, 10);
+
+        // ★ 7つの候補からランダムに選ぶ
+        int idx = random(0, TRANSPOSE_COUNT);
+        transpose = TRANSPOSE_LIST[idx];
+
         nextTransposeTime = now + random(5000, 15000);
         drawTopText();
     }
@@ -1995,20 +2083,31 @@ void loop() {
     static int pendingRandom = -1;
 
     if (now >= autoModeTimer) {
-        autoModeTimer = now + random(20000, 30000);
+
+        autoModeTimer = now + random(80000, 120000);
+
+        // ★ ランダムモード切替（既存）
         pendingRandom = (randomMode + 1) % 3;
-        pendingScale = 0;
+
+        // ★ スケール切替（0→1→2→0…）
+        pendingScale = (scaleMode + 1) % 3;
+
         drawRandomMode();
     }
 
     if (!g_arp.active) {
+
         if (pendingRandom != -1) {
             randomMode = pendingRandom;
             pendingRandom = -1;
         }
+
         if (pendingScale != -1) {
             scaleMode = pendingScale;
             pendingScale = -1;
+
+            //drawScaleName(); 
+            // ★ スケールが変わったらパターン再生成
             executeRandom();
         }
     }
@@ -2017,7 +2116,7 @@ void loop() {
     // メインステップ（8分 × 16）
     // =====================================================
     interval = 60000UL / max(stepBPM, 30) / 4;
-
+ 
     if (now - lastMainStepTime >= interval) {
         lastMainStepTime = now;
         currentStep = (currentStep + 1) % 16;
@@ -2045,6 +2144,7 @@ void loop() {
             // ★ パターン × 発音率（density）
             bool shouldPlay =
                 (!mainSilenceActive) &&
+                (!muteA) &&
                 (mainPattern[currentStep] == 1) &&
                 (random(0, 100) < mainDensity);
 
@@ -2099,7 +2199,7 @@ void loop() {
         // B パート（無音中は鳴らさない）
         // =================================================
         if (!mainSilenceActive) {
-            if (rhythmBPatterns[currentBPattern][currentStep] == 1) {
+            if (!muteB && rhythmBPatterns[currentBPattern][currentStep] == 1) {
                 uint8_t noteB = generateNoteB();
                 if (noteIsOnB) midi_bridge_send_note_off(lastNoteB, 1);
                 midi_bridge_send_note_on(noteB, 90, 1);
