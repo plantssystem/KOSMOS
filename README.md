@@ -1,41 +1,30 @@
-# 🌌 KOSMOS — Generative Music Instrument  
-Version **v1.3.1**
+# **KOSMOS v1.3.2**
 
-KOSMOS is a minimal, expressive generative music instrument built on the **RP2040**.  
-It creates fluid, evolving musical motion through a custom passage engine, smooth arpeggio behavior, and organic parameter interactions.
+## ✨ **New Features**
+- Added **MIDI Sync Out (24ppqn)**  
+  - Ultra‑stable clock powered by `micros()`  
+  - Compatible with Renoise, Ableton, Volca, Elektron, and other hardware/software
 
-This release focuses on refinement and stability, improving the overall feel of the instrument while keeping its core behavior intact.
+- Added **Start/Stop control (A+B simultaneous press)**  
+  - Start → MIDI `0xFA`  
+  - Stop → MIDI `0xFC`  
+  - Playback state is visualized through BPM text color  
+    - **Green** = Idle  
+    - **White** = Playing  
+    - **Red** = Stopped
 
----
+## 🎨 **UI Improvements**
+- BPM is now always displayed  
+- BPM text color changes based on Start/Stop state  
+- Removed long‑press program switching (prevents accidental changes)
 
-## ✨ Features
+## 🎵 **Stability**
+- Greatly reduced MIDI Clock jitter (now using `micros()` timing)  
+- Improved synchronization stability with Renoise  
+- Clock output is no longer affected by UI rendering load
 
-- Generative passage engine with smooth, rotating arpeggio/trill behavior  
-- Scale-based movement with expressive width, depth, and jump dynamics  
-- A/B parts with independent generative states  
-- Real‑time parameter control via buttons and UI  
-- Integrated LCD feedback (ST7789)  
-- Minimal, art‑instrument design philosophy
-
----
-
-## 🆕 What’s New in v1.3.1
-
-- Improved **splash screen** for a cleaner startup experience  
-- Sequencer **bug fixes** and subtle timing/behavior refinements  
-- More stable A/B part transitions  
-- Minor UI adjustments for reliability  
-- General stability improvements
-
----
-
-## 📺 Demo Video
-
-[![KOSMOS v1.3.1 – Generative Music Instrument](https://i.ytimg.com/vi/nwqlexkNDGk/hqdefault.jpg)](https://youtube.com/shorts/nwqlexkNDGk)
-
-
----
-## Special Thanks.
-- MATRIX SYNTH.
-- Powerd by ISGK Instruments PRA32-U.
+## 🛠 **Fixes**
+- Improved NoteOff timing stability  
+- Removed unused or redundant code  
+- Cleaned up A/B program switching behavior
 
