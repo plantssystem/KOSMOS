@@ -1741,7 +1741,7 @@ int findNearestDegree(uint8_t note, const uint8_t* sc, int scSize, int transpose
 void drawSplash() {
     lcdFill(COLOR_BLACK);
     lcdPrint(65, 100, "KOSMOS", COLOR_WHITE, COLOR_BLACK, 3);
-    lcdPrint(100, 135, "v1.3.2", COLOR_DARK_GRAY, COLOR_BLACK, 1);
+    lcdPrint(100, 135, "v1.3.3", COLOR_DARK_GRAY, COLOR_BLACK, 1);
     delay(10000);
 }
 
