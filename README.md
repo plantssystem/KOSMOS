@@ -47,7 +47,7 @@ It is now a **fully independent generative instrument**.
 ## 🎵 What KOSMOS Is  
 KOSMOS is a compact generative MIDI instrument built on the RP2040.  
 It creates **smooth, deep, rotating musical passages** with a unique blend of  
-**跳ねる (jumping)** and **滑らか (smooth)** expressive motion.
+**jumping** and **smooth** expressive motion.
 
 Designed as an **art instrument**, not a mass‑produced device.
 
