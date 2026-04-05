@@ -34,7 +34,7 @@ namespace MidiQ {
   inline bool pop(MidiEvent& out){uint32_t t=tail; if(t==head) return false; out=q[t]; tail=(t+1)%QSIZE; return true;}
 }
 
-inline void midi_bridge_send_note_on(uint8_t note,uint8_t vel,uint8_t ch=0){
+inline void synth_note_on_core1(uint8_t note,uint8_t vel,uint8_t ch=0){
     MidiEvent ev{EV_NOTE_ON,note,vel,ch};
 
     // ★ 最大 100 回だけリトライ（数十マイクロ秒程度）
@@ -45,7 +45,7 @@ inline void midi_bridge_send_note_on(uint8_t note,uint8_t vel,uint8_t ch=0){
     // ここまで来たら諦めて捨てる（アルペジオの時間軸を優先）
 }
 
-inline void midi_bridge_send_note_off(uint8_t note,uint8_t ch=0){
+inline void synth_note_off_core1(uint8_t note,uint8_t ch=0){
     MidiEvent ev{EV_NOTE_OFF,note,0,ch};
     for (int i = 0; i < 100; i++) {
         if (MidiQ::push(ev)) return;
@@ -480,6 +480,32 @@ unsigned long pressStartX = 0;
 unsigned long lastStepX = 0;
 
 bool isPlaying = false;
+
+void usb_send_note_on(uint8_t note, uint8_t vel, uint8_t ch) {
+    uint8_t msg[3] = { uint8_t(0x90 | (ch & 0x0F)), note, vel };
+    usb_midi.write(msg, 3);
+}
+
+void usb_send_note_off(uint8_t note, uint8_t ch) {
+    uint8_t msg[3] = { uint8_t(0x80 | (ch & 0x0F)), note, 0 };
+    usb_midi.write(msg, 3);
+}
+
+inline void midi_bridge_send_note_on(uint8_t note, uint8_t vel, uint8_t ch=0){
+    // 内部シンセへ送る（Core1）
+    MidiEvent ev{EV_NOTE_ON,note,vel,ch};
+    MidiQ::push(ev);
+
+    // USB MIDI へ送る（Core0）
+    usb_send_note_on(note, vel, ch);
+}
+
+inline void midi_bridge_send_note_off(uint8_t note, uint8_t ch=0){
+    MidiEvent ev{EV_NOTE_OFF,note,0,ch};
+    MidiQ::push(ev);
+
+    usb_send_note_off(note, ch);
+}
 
 // ============================================================
 // ★ Yボタン（リズムパターン切替）
