@@ -1,4 +1,5 @@
 # **KOSMOS v1.3.2 – Ultra‑Stable MIDI Sync & Refined UI**
+![KOSMOS Main Screen](docs/screenshots/KOSMOS_v1.3.2-01.JPG)
 
 ## ✨ **New Features**
 - Added **MIDI Sync Out (24ppqn)**  
