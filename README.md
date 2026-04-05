@@ -29,3 +29,6 @@
 - Removed unused or redundant code  
 - Cleaned up A/B program switching behavior
 
+## **Special Thanks**
+- MATRIXSYNTH
+- Powerd by ISGK Instruments PRA32-U
