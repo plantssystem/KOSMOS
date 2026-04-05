@@ -9,7 +9,7 @@ It is now a **fully independent generative instrument**.
 
 ---
 
-## 📸 **KOSMOS Screenshot**
+## 📸 **KOSMOS Generative Instrument**
 
 ![KOSMOS Main Screen](docs/screenshots/KOSMOS_v1.3.2-01.JPG)
 
