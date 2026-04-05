@@ -15,7 +15,7 @@ It is now a **fully independent generative instrument**.
 
 ---
 
-## 🎬 **Demo Video**
+## 🎬 **Demo Video (MIDI Note Out)**
 
 [![KOSMOS Demo](https://img.youtube.com/vi/7wxEcKTzKKI/0.jpg)](https://youtube.com/shorts/7wxEcKTzKKI)
 
