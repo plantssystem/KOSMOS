@@ -19,6 +19,8 @@ It is now a **fully independent generative instrument**.
 
 [![KOSMOS v1.3.1 – Generative Music Instrument](https://i.ytimg.com/vi/nwqlexkNDGk/hqdefault.jpg)](https://youtube.com/shorts/nwqlexkNDGk)
 
+[![YouTube Shorts](https://img.youtube.com/vi/7wxEcKTzKKI/0.jpg)](https://youtube.com/shorts/7wxEcKTzKKI)
+
 ---
 
 ## ✨ New in v1.3.3
