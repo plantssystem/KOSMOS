@@ -10,6 +10,8 @@ It combines:
 
 Version **v1.3.4** introduces a major upgrade to the **step bar visualization**, greatly improving clarity and musical awareness during performance.
 
+![KOSMOS v1.3.4 Main](docs/screenshots/KOSMOSv1.3.4Main.jpg)
+
 ---
 
 # 🎬 Demo Video
