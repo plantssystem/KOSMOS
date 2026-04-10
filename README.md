@@ -14,6 +14,7 @@ Version **v1.3.4** introduces a major upgrade to the **step bar visualization**,
 
 # 🎬 Demo Video
 
+[![YouTube Shorts](https://img.youtube.com/vi/SoKy0JxPQFU/maxresdefault.jpg)](https://youtube.com/shorts/SoKy0JxPQFU)
 
 ---
 
