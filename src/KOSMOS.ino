@@ -162,6 +162,8 @@ Adafruit_USBD_MIDI usb_midi;
 #define COLOR_CYAN    0x07FF
 #define COLOR_MAGENTA 0xF81F
 #define COLOR_DARK_GRAY 0x2104
+#define COLOR_GRAY 0x8410   // 中間グレー（RGB565）
+#define COLOR_ORANGE 0xFD20   // 明るいオレンジ
 
 // ==== Waveshare Pico-LCD-1.3 ピン定義 ====
 #define LCD_DC   8
@@ -291,7 +293,7 @@ const uint8_t font5x7[][5] = {
 // ============================================================
 // ★ BPM テーブル（X ボタン用）
 // ============================================================
-const int BPM_TABLE[] = {20, 80, 140, 200, 260};
+const int BPM_TABLE[] = {20, 80, 120, 140, 240};
 const int BPM_COUNT = 5;
 
 // ---- テンポ（内部 BPM のみ）----
@@ -306,12 +308,12 @@ const int TRANSPOSE_LIST[] = { -10, -5, -4, 0, +4, +5, +10 };
 const int TRANSPOSE_COUNT = 7;
 
 // 8分 × 16 のリズムパターン
-int rhythmPatterns[5][16] = {
-    // パターン0：全打ち（基礎）
-    {1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1},
-    
-    // パターン1：交互（跳ね）
+int rhythmPatterns[6][16] = {
+    // パターン0：交互（基礎）
     {1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0},
+
+    // パターン1：前打ち（前打ち）
+    {1,1,1,1,1,1,1,1,0,0,0,0,0,0,0,0},
 
     // パターン2：余白多め（呼吸）
     {1,0,0,1,0,0,1,0,1,0,0,1,0,0,1,0},
@@ -320,8 +322,13 @@ int rhythmPatterns[5][16] = {
     {1,1,0,1,0,1,0,1,1,0,1,0,1,0,1,0},
 
     // パターン4：後半寄り（タメ・尺八的）
-    {0,0,1,0,0,1,0,1,1,0,1,1,0,1,0,1}
+    {0,0,1,0,0,1,0,1,1,0,1,1,0,1,0,1},
+
+    // パターン5：3連（伸び）
+    {1,1,1,0,1,1,1,0,1,1,1,0,1,1,1,0}
 };
+
+bool mainNoteExtended = false;
 
 int currentPattern = 0;   // 現在のパターン
 int mainDensity = 100;    // 発音率（0〜100%）
@@ -970,6 +977,7 @@ void updateProbabilityBars() {
     lastSelected = selectedStep;
 }
 
+/*
 void updateStepBars() {
     static int lastStep = -1;
 
@@ -993,6 +1001,70 @@ void updateStepBars() {
         // 現在のステップを赤で描く
         int x = x0 + currentStep * (barWidth + gap);
         lcdFillRect(x, y0, barWidth, barHeight, COLOR_RED);
+
+        lastStep = currentStep;
+    }
+}
+*/
+void updateStepBars() {
+    static int lastStep = -1;
+    static int lastPattern[16];
+
+    int x0 = 5;
+    int y0 = 120;
+    int barWidth = 12;
+    int barHeight = 20;
+    int gap = 3;
+
+    // ★ パターン変化チェック
+    bool patternChanged = false;
+    for (int i = 0; i < 16; i++) {
+        if (mainPattern[i] != lastPattern[i]) {
+            patternChanged = true;
+            break;
+        }
+    }
+
+    // ★ パターンが変わったら全バーを描き直す
+    if (patternChanged) {
+        for (int i = 0; i < 16; i++) {
+            int x = x0 + i * (barWidth + gap);
+
+            uint16_t color;
+            if (mainPattern[i] == 1)
+                color = COLOR_GREEN;   // パターンON → 緑色
+            else
+                color = COLOR_GRAY;     // パターンOFF → 灰色
+
+            lcdFillRect(x, y0, barWidth, barHeight, color);
+            lastPattern[i] = mainPattern[i];
+        }
+    }
+
+    // ★ ステップ移動時
+    if (currentStep != lastStep) {
+
+        // 前ステップを元の色に戻す
+        if (lastStep >= 0) {
+            int x = x0 + lastStep * (barWidth + gap);
+
+            uint16_t color;
+            if (mainPattern[lastStep] == 1)
+                color = COLOR_GREEN;
+            else
+                color = COLOR_GRAY;
+
+            lcdFillRect(x, y0, barWidth, barHeight, color);
+        }
+
+        // ★ 現在ステップを赤 or オレンジで塗る
+        int x = x0 + currentStep * (barWidth + gap);
+
+        if (mainNoteExtended) {
+            lcdFillRect(x, y0, barWidth, barHeight, COLOR_ORANGE);  // 伸びてるとき
+        } else {
+            lcdFillRect(x, y0, barWidth, barHeight, COLOR_RED);     // 通常
+        }
 
         lastStep = currentStep;
     }
@@ -1234,7 +1306,6 @@ void drawNoteDots() {
         }
     }
 }
-
 
 void sendNoteOnCh(uint8_t note, uint8_t velocity, uint8_t ch) {
     uint8_t msg[3] = { (uint8_t)(0x90 | (ch & 0x0F)), note, velocity };
@@ -1741,7 +1812,7 @@ int findNearestDegree(uint8_t note, const uint8_t* sc, int scSize, int transpose
 void drawSplash() {
     lcdFill(COLOR_BLACK);
     lcdPrint(65, 100, "KOSMOS", COLOR_WHITE, COLOR_BLACK, 3);
-    lcdPrint(100, 135, "v1.3.3", COLOR_DARK_GRAY, COLOR_BLACK, 1);
+    lcdPrint(100, 135, "v1.3.4", COLOR_DARK_GRAY, COLOR_BLACK, 1);
     delay(10000);
 }
 
@@ -2060,6 +2131,10 @@ void loop() {
     // =====================================================
     if (mainSilenceActive && now >= mainSilenceDuration) {
         mainSilenceActive = false;
+        
+        // ★ ここでパターン更新を必ず行う
+        currentPattern = random(0, 6);
+        memcpy(mainPattern, rhythmPatterns[currentPattern], sizeof(mainPattern));
 
         // B パターンを復活
         currentBPattern = 0;
@@ -2153,8 +2228,9 @@ void loop() {
         }
 
         // メインパターン更新（無音中は上書きしない）
-        if (!mainSilenceActive) {
-            currentPattern = random(0, 5);
+        //if (!mainSilenceActive) {
+        if (currentStep == 0 && !mainSilenceActive) {
+             currentPattern = random(0, 6);
             memcpy(mainPattern, rhythmPatterns[currentPattern], sizeof(mainPattern));
         }
 

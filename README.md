@@ -1,75 +1,152 @@
-# KOSMOS v1.3.3 – Complete Generative Instrument  
-**Now outputs MIDI Notes + MIDI Clock. Controls any DAW/VST in real time.**
+# KOSMOS v1.3.4  
+### *Generative  Instrument for RP2040 + Waveshare Pico-Audio + Pico-LCD-1.3*
 
-KOSMOS has reached a new milestone.  
-With **v1.3.3**, it finally implements **MIDI Note Out**, allowing the generative engine to directly control **VST instruments, hardware synths, and any DAW** with microsecond‑accurate timing.
+KOSMOS is a self‑contained **generative  instrument** built on the RP2040.  
+It combines:
 
-KOSMOS is no longer just a sequencer.  
-It is now a **fully independent generative instrument**.
+- **PRA32-U** dual‑channel synthesizer (via Waveshare Pico-Audio)  
+- **Pico-LCD-1.3** for real‑time visual feedback  
+- A custom generative engine that produces **organic, breathing musical motion**
 
----
-
-## 📸 **KOSMOS Generative Instrument**
-
-![KOSMOS Main Screen](docs/screenshots/KOSMOS_v1.3.2-01.JPG)
+Version **v1.3.4** introduces a major upgrade to the **step bar visualization**, greatly improving clarity and musical awareness during performance.
 
 ---
 
-## 🎬 **Demo Video (MIDI Note Out)**
+# 🎬 Demo Video
 
-[![KOSMOS Demo](https://img.youtube.com/vi/7wxEcKTzKKI/0.jpg)](https://youtube.com/shorts/7wxEcKTzKKI)
-
----
-
-## ✨ New in v1.3.3
-
-### **✔ MIDI Note Out (NEW)**
-- Sends stable NoteOn / NoteOff messages  
-- Drives VST instruments in Ableton, Renoise, Logic, Bitwig, etc.  
-- Works with hardware synths via USB‑MIDI  
-- Timing is microsecond‑accurate and independent of UI load  
-
-### **✔ Ultra‑Stable MIDI Sync Out (24ppqn)**
-- microsecond‑precision clock  
-- Verified stable with Renoise, Ableton Live, Volca, Elektron  
-- UI rendering no longer affects clock timing  
-
-### **✔ Transport Control**
-- **A+B → Start (0xFA)**  
-- **A+B → Stop (0xFC)**  
-- BPM color indicates state  
-  - Green = Idle  
-  - White = Playing  
-  - Red = Stopped  
 
 ---
 
-## 🎵 What KOSMOS Is  
-KOSMOS is a compact generative MIDI instrument built on the RP2040.  
-It creates **smooth, deep, rotating musical passages** with a unique blend of  
-**跳ねる (jumping)** and **滑らか (smooth)** expressive motion.
+# ✨ Features
 
-Designed as an **art instrument**, not a mass‑produced device.
+## 🎹 Generative  Engine
+- Scale‑dependent behavior (HEI / MIYA / INSEN)
+- Smooth, jumping, or deep expressive movement
+- Randomized duration extension for “breathing” phrasing
+- Dual‑channel PRA32-U synthesis (Main + Sub)
+- USB MIDI output + internal MIDI bridge
+
+## 🎨 Visual Feedback (v1.3.4)
+The step bar now uses **color-coded full-fill rendering** to show pattern state, playhead position, and expressive timing.
+
+### Step Colors
+| Color | Meaning |
+|-------|---------|
+| **G (Green)** | Pattern ON (`mainPattern[i] == 1`) |
+| **W (Gray)** | Pattern OFF (`mainPattern[i] == 0`) |
+| **R (Red)** | Current step (playhead) |
+| **O (Orange)** | Extended-duration note (A-part only) |
+
+### Example
+```
+[W][G][W][G][W][G][W][G][W][G][W][G][W][G][W][G]
+                               [R] ← current step
+                               [O] ← extended note
+```
 
 ---
 
-## 🧩 System Architecture (Mermaid Diagram)
-```mermaid
-flowchart TD
-    A[KOSMOS\nGenerative Engine] --> B[MIDI Note\nGenerator]
-    A --> C[MIDI Clock\n24ppqn]
-    B --> D[USB MIDI OUT]
-    C --> D
-    D --> E[PC Host]
-    E --> F[DAW\nAbleton Renoise Logic Bitwig]
-    F --> G[VST Instruments]
-    F --> H[MIDI FX\nRouting Tools]
-    D --> I[Hardware Synths\nVolca Elektron Boutique]
+# 🆕 Improvements in v1.3.4
+
+## ✔ 1. Full-Fill Step Rendering
+All 16 steps are now drawn as **solid blocks**, eliminating visibility issues and ensuring stable rendering even during fast BPM.
+
+## ✔ 2. Immediate Pattern Reflection
+Whenever `mainPattern[]` changes, all steps are redrawn instantly, making pattern transitions visually obvious.
+
+## ✔ 3. Expressive Timing Visualization (O = Orange)
+When the A-part randomly extends a note’s duration, the current step briefly turns **O (Orange)**.  
+This makes expressive timing changes visible and intuitive.
+
+## ✔ 4. Smooth Behavior Without Visual “Hiccups”
+The timing of R/O transitions has been refined to avoid conflicts between:
+
+- step progression  
+- noteOn / noteOff  
+- duration extension  
+
+The result is a smooth, natural visual flow.
+
+---
+
+# 🧠 Internal Architecture
+
+## Core1 (RP2040)
+- PRA32-U synthesizer (Main + Sub)
+- I2S audio output
+- MIDI event queue processing
+
+## Core0
+- KOSMOS generative engine
+- Step sequencer
+- Pattern generation
+- LCD rendering
+- USB MIDI output
+
+---
+
+# 🎛 Controls
+
+| Button | Function |
+|--------|----------|
+| **A** | Program change (ch1) |
+| **B** | Program change (ch2) |
+| **A + B** | MIDI Start / Stop |
+| **X** | Mute toggle (A / B / ALL) |
+| **Y** | BPM cycle (20 / 80 / 140 / 200 / 260) |
+| **Joystick** | Scale switching & future expansion |
+
+---
+
+# 🎼 Scales
+
+| Mode | Character |
+|------|-----------|
+| **HEI** | Bright, fast, jumping |
+| **MIYA** | Emotional, slower |
+| **INSEN** | Deep, traditional, sticky |
+
+Each scale changes:
+
+-  speed  
+- Movement width  
+- Direction behavior  
+- Duration extension probability  
+
+---
+
+# 📦 Hardware Requirements
+
+- Raspberry Pi Pico  
+- Waveshare Pico-Audio  
+- Waveshare Pico-LCD-1.3  
+- USB MIDI (optional)  
+- 3.5mm audio output  
+
+---
+
+# 📁 Source Structure
 
 ```
+/src
+  ├── kosmos_main.cpp
+  ├── pra32-u-common.h
+  ├── pra32-u-synth.h
+  └── ...
+```
+
 ---
 
-## **Special Thanks**
+# 📝 License
+MIT License
+
+---
+
+# 🙌 Author
+**Sugimoto — KOSMOS Project**
+
+---
+
+# 🌟 Special Thanks
 - MATRIXSYNTH
 - Powerd by ISGK Instruments PRA32-U
----
