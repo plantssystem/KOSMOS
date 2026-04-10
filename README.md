@@ -132,7 +132,7 @@ Each scale changes:
 
 ```
 /src
-  ├── kosmos_main.cpp
+  ├── KOSMOS.ino
   ├── pra32-u-common.h
   ├── pra32-u-synth.h
   └── ...
