@@ -146,7 +146,7 @@ MIT License
 ---
 
 # 🙌 Author
-**Sugimoto — KOSMOS Project**
+**osamu — KOSMOS Project**
 
 ---
 
