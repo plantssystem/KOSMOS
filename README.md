@@ -10,10 +10,13 @@ It combines:
 
 Version **v1.3.4** introduces a major upgrade to the **step bar visualization**, greatly improving clarity and musical awareness during performance.
 
+![KOSMOS v1.3.4 Main](docs/screenshots/KOSMOSv1.3.4Main.jpg)
+
 ---
 
 # 🎬 Demo Video
 
+[![YouTube Shorts](https://img.youtube.com/vi/SoKy0JxPQFU/maxresdefault.jpg)](https://youtube.com/shorts/SoKy0JxPQFU)
 
 ---
 
@@ -129,7 +132,7 @@ Each scale changes:
 
 ```
 /src
-  ├── kosmos_main.cpp
+  ├── KOSMOS.ino
   ├── pra32-u-common.h
   ├── pra32-u-synth.h
   └── ...
@@ -143,7 +146,7 @@ MIT License
 ---
 
 # 🙌 Author
-**Sugimoto — KOSMOS Project**
+**osamu — KOSMOS Project**
 
 ---
 
