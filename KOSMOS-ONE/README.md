@@ -1,6 +1,7 @@
 # 🌌 KOSMOS-ONE  
 Generative Melodic Instrument for RP2040 + PRA32-U  
 **Pimoroni Pico Audio Pack Edition — No Display / Headless Version**
+![KOSMOS-ONE](../docs/screenshots/KOSMOS-ONE.JPG)
 
 KOSMOS-ONE is a standalone generative melodic instrument built on the  
 Raspberry Pi Pico (RP2040), featuring a dual-instance PRA32-U synthesizer  
