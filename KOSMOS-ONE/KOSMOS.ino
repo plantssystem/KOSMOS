@@ -11,7 +11,7 @@ float g_sub_gain = 1.0f;   // 0.0〜1.0
 
 I2S g_i2s_output(OUTPUT);
 
-#define PRA32_U_VERSION "vOne"
+#define PRA32_U_VERSION "v1.0.0"
 #define PRA32_U_MIDI_CH (0)
 
 // I2S / DAC for Pimoroni Pico Audio Pack (PIM544)
@@ -75,6 +75,8 @@ I2S i2s(OUTPUT);
 
 extern I2S g_i2s_output;
 
+int g_master_transpose = 0;  // -12〜+12
+
 // ------------------------------------------------------
 // Core1: メイン処理（I2S + シンセ + MIDI受信）
 // ------------------------------------------------------
@@ -128,6 +130,15 @@ void __not_in_flash_func(core1_main)() {
                 // ★ Bパート Volume（CC200）
                 else if (ev.d1 == 200 && ev.ch == 1) {
                     g_sub_gain = ev.d2 / 127.0f;
+                }
+                // ★ Master Pitch（CC201）
+                else if (ev.d1 == 201) {
+                    int t = constrain(ev.d2 - 64, -12, 12);  // -12〜+12 半音
+                    uint8_t ccVal = t + 64;                  // PRA32-U 用に 0〜127 に戻す
+                    // Aパート
+                    g_synth.control_change(15, ccVal);
+                    // Bパート
+                    g_sub_synth.control_change(15, ccVal);
                 }
                 // ★ それ以外の CC は全部シンセにパススルー
                 else {
@@ -1433,7 +1444,7 @@ void arp_update(uint32_t nowMs) {
     if (!g_arp.active) return;
     if (nowMs < g_arp.nextStepMs) return;
 
-    // 前のノートを切る
+    // 前のノートを切る（lastNote は transpose 済み）
     if (g_arp.noteOn) {
         midi_bridge_send_note_off(g_arp.lastNote, 0);
         g_arp.noteOn = false;
@@ -1442,11 +1453,18 @@ void arp_update(uint32_t nowMs) {
     int scSize;
     const uint8_t* sc = getScale(g_arp.scaleMode, scSize);
 
-    // ★ ノート決定（共通）
+    // ★ ノート決定（元の note）
     uint8_t note = g_arp.baseNote + g_arp.octave * 12 + sc[g_arp.currentDegree];
-    midi_bridge_send_note_on(note, 90, 0);
 
-    g_arp.lastNote = note;
+    // ★ Master Transpose を適用
+    int tn = note + g_master_transpose;
+    tn = constrain(tn, 0, 127);
+
+    // ★ transpose 済みノートを送る
+    midi_bridge_send_note_on(tn, 90, 0);
+
+    // ★ lastNote には transpose 済みノートを保存
+    g_arp.lastNote = tn;
     g_arp.noteOn = true;
 
     // =====================================================
@@ -1467,7 +1485,6 @@ void arp_update(uint32_t nowMs) {
         if (g_arp.remainingUpSteps <= 0) {
 
             // ★ 上昇では絶対に止めない
-            // → 下降へ切り替え
             g_arp.arpGoingUp = false;
             g_arp.currentDegree = scSize - 1;
 
@@ -1482,9 +1499,7 @@ void arp_update(uint32_t nowMs) {
     // =====================================================
     // ★ 下降フェーズ
     // =====================================================
-    //int drop = random(1, 3);  // 1〜2音下降（安定・自然・音数が増える）
-    int drop = random(1, 3);  // 1〜2音下降（安定・自然・音数が増える）
-
+    int drop = random(1, 3);  // 1〜2音下降
     g_arp.currentDegree -= drop;
 
     // スケール下端処理
@@ -1567,6 +1582,11 @@ void loop() {
                 uint8_t val = d2;
 
                 bool handled = false;
+
+                if (cc == 83) {
+                    g_master_transpose = constrain(val - 64, -12, 12);
+                    handled = true;
+                }
 
                 // ★ CC82 → Bパート Volume（Core1 CC200)
                 if (cc == 82) {
@@ -1754,7 +1774,7 @@ void loop() {
     // メインステップ（8分 × 16）
     // =====================================================
     interval = 60000UL / max(stepBPM, 30) / 4;
- 
+
     if (now - lastMainStepTime >= interval) {
         lastMainStepTime = now;
         currentStep = (currentStep + 1) % 16;
@@ -1766,15 +1786,16 @@ void loop() {
 
         // メインパターン更新（無音中は上書きしない）
         if (currentStep == 0 && !mainSilenceActive) {
-             currentPattern = random(0, 6);
+            currentPattern = random(0, 6);
             memcpy(mainPattern, rhythmPatterns[currentPattern], sizeof(mainPattern));
         }
 
         // ★ アルペジオ中はメインを鳴らさない
         if (!g_arp.active) {
 
-            // NoteOff
+            // NoteOff（時間で消す）
             if (noteIsOnMain && now >= noteOffTimeMain) {
+                // lastNoteMain は transpose 済みノート
                 midi_bridge_send_note_off(lastNoteMain, 0);
                 noteIsOnMain = false;
             }
@@ -1812,38 +1833,48 @@ void loop() {
 
                 int idx = mainDegree % scSize;
                 uint8_t noteA = 60 + transpose + sc[idx];
-
                 int velA = map(stepBPM, 30, 140, 70, 120) + random(-10, 10);
-                midi_bridge_send_note_on(noteA, velA, 0);
 
-                lastNoteMain = noteA;
+                // ★ Master Transpose を適用
+                int tn = noteA + g_master_transpose;
+                tn = constrain(tn, 0, 127);
+
+                midi_bridge_send_note_on(tn, velA, 0);
+
+                // ★ transpose 済みノートを保存
+                lastNoteMain = tn;
                 noteIsOnMain = true;
                 noteOffTimeMain = now + (interval * 0.85);
-
-            } else {
-                // 鳴らさないときは noteOff
-                if (noteIsOnMain) {
-                    midi_bridge_send_note_off(lastNoteMain, 0);
-                    noteIsOnMain = false;
-                }
             }
         }
-
 
         // =================================================
         // B パート（無音中は鳴らさない）
         // =================================================
         if (!mainSilenceActive) {
             if (!muteB && rhythmBPatterns[currentBPattern][currentStep] == 1) {
+
                 uint8_t noteB = generateNoteB();
-                if (noteIsOnB) midi_bridge_send_note_off(lastNoteB, 1);
-                midi_bridge_send_note_on(noteB, 90, 1);
-                lastNoteB = noteB;
+
+                // ★ すでに鳴っているノートを止める
+                if (noteIsOnB) {
+                    // lastNoteB も transpose 済み
+                    midi_bridge_send_note_off(lastNoteB, 1);
+                }
+
+                // ★ 新しいノートに transpose を適用
+                int tn = noteB + g_master_transpose;
+                tn = constrain(tn, 0, 127);
+
+                midi_bridge_send_note_on(tn, 90, 1);
+
+                // ★ transpose 済みノートを保存
+                lastNoteB = tn;
                 noteIsOnB = true;
+
                 noteOffTimeB = now + (interval * 1.8);
             }
         }
-
     }
 
     // =====================================================
