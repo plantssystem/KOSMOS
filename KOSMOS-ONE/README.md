@@ -19,7 +19,7 @@ Japanese musical scales, breathing tempo variations, and organic randomness.
 ### 🎼 Japanese Scales Built In
 KOSMOS-ONE includes three traditional Japanese scales:
 
-- **Heichōshi** (平調子)
+- **Hirajoushi** (平調子)
 - **Miyakobushi** (都節)
 - **Insen** (陰旋法)
 
