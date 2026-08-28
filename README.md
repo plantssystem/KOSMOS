@@ -141,7 +141,7 @@ Each scale changes:
 ---
 
 # 📝 License
-MIT License
+CC License
 
 ---
 
